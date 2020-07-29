@@ -266,6 +266,7 @@ struct Search {
 
   //Get the values recorded for the root node, if possible.
   bool getRootValues(ReportedSearchValues& values) const;
+  bool getRootStatus() const;
   //Same, same, but throws an exception if no values could be obtained
   ReportedSearchValues getRootValuesRequireSuccess() const;
   //Same, but works on a node within the search, not just the root
