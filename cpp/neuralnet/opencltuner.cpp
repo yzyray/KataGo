@@ -256,8 +256,8 @@ bool OpenCLParams::HGemmWmmaParams::isValid() const {
   if(VWN <= 0) return false;
   if(SA < 0 || SA > 1) return false;
   if(SB < 0 || SB > 1) return false;
-  if(SA == 0 && VWM != 2) return false;
-  if(SB == 0 && VWN != 2) return false;
+  if(SA == 0 && VWM != 2 && VWM != 1) return false;
+  if(SB == 0 && VWN != 2 && VWN != 1) return false;
 
   if(!isMultipleOf(MWG,VWM)) return false;
   if(!isMultipleOf(NWG,VWN)) return false;
