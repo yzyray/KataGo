@@ -423,6 +423,8 @@ struct GTPEngine {
   bool staticPDATakesPrecedence;
   double genmoveWideRootNoise;
   double analysisWideRootNoise;
+  bool genmoveAntiMirror;
+  bool analysisAntiMirror;
 
   NNEvaluator* nnEval;
   AsyncBot* bot;
@@ -455,6 +457,7 @@ struct GTPEngine {
     double dynamicPDACapPerOppLead, double staticPDA, bool staticPDAPrecedence,
     bool avoidDagger,
     double genmoveWRN, double analysisWRN,
+    bool genmoveAntiMir, bool analysisAntiMir,
     Player persp, int pvLen
   )
     :nnModelFile(modelFile),
@@ -466,6 +469,8 @@ struct GTPEngine {
      staticPDATakesPrecedence(staticPDAPrecedence),
      genmoveWideRootNoise(genmoveWRN),
      analysisWideRootNoise(analysisWRN),
+     genmoveAntiMirror(genmoveAntiMir),
+     analysisAntiMirror(analysisAntiMir),
      nnEval(NULL),
      bot(NULL),
      currentRules(initialRules),
@@ -987,6 +992,10 @@ struct GTPEngine {
       params.wideRootNoise = genmoveWideRootNoise;
       bot->setParams(params);
     }
+    if(params.antiMirror != genmoveAntiMirror) {
+      params.antiMirror = genmoveAntiMirror;
+      bot->setParams(params);
+    }
 
     //Play faster when winning
     double searchFactor = PlayUtils::getSearchFactor(searchFactorWhenWinningThreshold,searchFactorWhenWinning,params,recentWinLossValues,pla);
@@ -1249,6 +1258,10 @@ struct GTPEngine {
     //Also wide root, if desired
     if(params.wideRootNoise != analysisWideRootNoise) {
       params.wideRootNoise = analysisWideRootNoise;
+      bot->setParams(params);
+    }
+    if(params.antiMirror != analysisAntiMirror) {
+      params.antiMirror = analysisAntiMirror;
       bot->setParams(params);
     }
 
@@ -1611,6 +1624,9 @@ int MainCmds::gtp(int argc, const char* const* argv) {
   const double genmoveWideRootNoise = initialParams.wideRootNoise;
   const double analysisWideRootNoise =
     cfg.contains("analysisWideRootNoise") ? cfg.getDouble("analysisWideRootNoise",0.0,5.0) : genmoveWideRootNoise;
+  const double analysisAntiMirror = initialParams.antiMirror;
+  const double genmoveAntiMirror =
+    cfg.contains("genmoveAntiMirror") ? cfg.getBool("genmoveAntiMirror") : cfg.contains("antiMirror") ? cfg.getBool("antiMirror") : true;
 
   Player perspective = Setup::parseReportAnalysisWinrates(cfg,C_EMPTY);
 
@@ -1621,6 +1637,7 @@ int MainCmds::gtp(int argc, const char* const* argv) {
     staticPlayoutDoublingAdvantage,staticPDATakesPrecedence,
     avoidMYTDaggerHack,
     genmoveWideRootNoise,analysisWideRootNoise,
+    genmoveAntiMirror,analysisAntiMirror,
     perspective,analysisPVLen
   );
   engine->setOrResetBoardSize(cfg,logger,seedRand,defaultBoardXSize,defaultBoardYSize);
