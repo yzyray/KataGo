@@ -1884,7 +1884,6 @@ void Search::playoutDescend(
     assert(false);
     throw StringError("Search error: No move with sane selection value - can't even pass?");
   }
-
   //Reallocate the children array to increase capacity if necessary
   if(bestChildIdx >= node.childrenCapacity) {
     int newCapacity = node.childrenCapacity + (node.childrenCapacity / 4) + 1;
@@ -1909,7 +1908,10 @@ void Search::playoutDescend(
     child = new SearchNode(*this,thread.pla,thread.rand,moveLoc);
     node.children[bestChildIdx] = child;
   }
-  else {
+  else {	  
+  if (bestChildIdx == -1) {
+	  return;
+  }
     child = node.children[bestChildIdx];
   }
 
