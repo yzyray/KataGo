@@ -28,7 +28,6 @@ static const vector<string> knownCommands = {
   "rectangular_boardsize",
 
   "clear_board",
-  "set_position",
   "komi",
   "play",
   "undo",
@@ -42,7 +41,13 @@ static const vector<string> knownCommands = {
   "kata-get-param",
   "kata-set-param",
   "kgs-rules",
-
+  
+  //pda command
+  "pda",
+  "dympdacap",
+  "getpda",
+  "getdympdacap",
+  
   "genmove",
   "genmove_debug", //Prints additional info to stderr
   "search_debug", //Prints additional info to stderr, doesn't actually make the move
@@ -159,6 +164,103 @@ static bool noWhiteStonesOnBoard(const Board& board) {
   return true;
 }
 
+static void updatePlayoutDoublingAdvantageHelper2(
+	AsyncBot* bot, const Board& board, const BoardHistory& hist,
+	double dynamicPlayoutDoublingAdvantageCapPerOppLead,
+	double& desiredPlayoutDoublingAdvantage,
+	SearchParams& params
+) {
+	(void)board;
+	if (!noWhiteStonesOnBoard(board))
+		return;
+	if (dynamicPlayoutDoublingAdvantageCapPerOppLead <= 0.0)
+		return;
+	  double boardSizeScaling = pow(19.0 * 19.0 / (double)(board.x_size * board.y_size), 0.75);
+    double pdaScalingStartPoints = std::max(4.0 / boardSizeScaling, 2.0);
+    double initialBlackAdvantageInPoints = initialBlackAdvantage(hist);
+   double initialAdvantageInPoints = abs(initialBlackAdvantageInPoints);
+	if ((initialBlackAdvantageInPoints < pdaScalingStartPoints)) {
+		desiredPlayoutDoublingAdvantage = 0.0;
+	}
+	else {		
+   // Player disadvantagedPla = initialBlackAdvantageInPoints >= 0 ? P_WHITE : P_BLACK; 
+	if(initialAdvantageInPoints < pdaScalingStartPoints ) {
+		if(board.x_size <= 7 || board.y_size <= 7)
+			desiredPlayoutDoublingAdvantage = 0.0;
+		return;
+    }
+	 //What increment to adjust desiredPlayoutDoublingAdvantage at.
+      //Power of 2 to avoid any rounding issues.
+      const double increment = 0.125;
+
+      //Hard cap of 2.75 in this parameter, since more extreme values start to reach into values without good training.
+      //Scale mildly with board size - small board a given point lead counts as "more".
+      double pdaCap = std::min(
+        2.75,
+        dynamicPlayoutDoublingAdvantageCapPerOppLead *
+        (initialAdvantageInPoints - pdaScalingStartPoints) * boardSizeScaling
+      );
+      pdaCap = round(pdaCap / increment) * increment;
+		//No history, or literally no white stones on board? Then this is a new game or a newly set position
+			//Just use the cap		
+		desiredPlayoutDoublingAdvantage =pdaCap;
+		
+		if (params.playoutDoublingAdvantage != desiredPlayoutDoublingAdvantage) {
+			params.playoutDoublingAdvantage = desiredPlayoutDoublingAdvantage;
+			bot->setParams(params);
+			printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+		}
+	}
+}
+
+static void updatePlayoutDoublingAdvantageHelper3(
+	AsyncBot* bot, const Board& board, const BoardHistory& hist,
+	double dynamicPlayoutDoublingAdvantageCapPerOppLead,
+	double& desiredPlayoutDoublingAdvantage,
+	SearchParams& params
+) {
+	(void)board;
+	if (dynamicPlayoutDoublingAdvantageCapPerOppLead <= 0.0)
+		return;
+	  double boardSizeScaling = pow(19.0 * 19.0 / (double)(board.x_size * board.y_size), 0.75);
+    double pdaScalingStartPoints = std::max(4.0 / boardSizeScaling, 2.0);
+    double initialBlackAdvantageInPoints = initialBlackAdvantage(hist);
+   double initialAdvantageInPoints = abs(initialBlackAdvantageInPoints);
+	if ((initialBlackAdvantageInPoints < pdaScalingStartPoints)) {
+		desiredPlayoutDoublingAdvantage = 0.0;
+	}
+	else {		
+   // Player disadvantagedPla = initialBlackAdvantageInPoints >= 0 ? P_WHITE : P_BLACK; 
+	if(initialAdvantageInPoints < pdaScalingStartPoints ) {
+		if(board.x_size <= 7 || board.y_size <= 7)
+			desiredPlayoutDoublingAdvantage = 0.0;
+		return;
+    }
+	 //What increment to adjust desiredPlayoutDoublingAdvantage at.
+      //Power of 2 to avoid any rounding issues.
+      const double increment = 0.125;
+
+      //Hard cap of 2.75 in this parameter, since more extreme values start to reach into values without good training.
+      //Scale mildly with board size - small board a given point lead counts as "more".
+      double pdaCap = std::min(
+        2.75,
+        dynamicPlayoutDoublingAdvantageCapPerOppLead *
+        (initialAdvantageInPoints - pdaScalingStartPoints) * boardSizeScaling
+      );
+      pdaCap = round(pdaCap / increment) * increment;
+		//No history, or literally no white stones on board? Then this is a new game or a newly set position
+			//Just use the cap		
+		desiredPlayoutDoublingAdvantage =pdaCap;
+		if (params.playoutDoublingAdvantage != desiredPlayoutDoublingAdvantage) {
+			params.playoutDoublingAdvantage = desiredPlayoutDoublingAdvantage;
+			bot->setParams(params);
+			printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+		}
+	}
+}
+
+
+
 static void updateDynamicPDAHelper(
   const Board& board, const BoardHistory& hist,
   const double dynamicPlayoutDoublingAdvantageCapPerOppLead,
@@ -167,7 +269,8 @@ static void updateDynamicPDAHelper(
 ) {
   (void)board;
   if(dynamicPlayoutDoublingAdvantageCapPerOppLead <= 0.0) {
-    desiredDynamicPDAForWhite = 0.0;
+	  return;
+    //desiredDynamicPDAForWhite = 0.0;
   }
   else {
     double boardSizeScaling = pow(19.0 * 19.0 / (double)(board.x_size * board.y_size), 0.75);
@@ -175,8 +278,11 @@ static void updateDynamicPDAHelper(
     double initialBlackAdvantageInPoints = initialBlackAdvantage(hist);
     Player disadvantagedPla = initialBlackAdvantageInPoints >= 0 ? P_WHITE : P_BLACK;
     double initialAdvantageInPoints = abs(initialBlackAdvantageInPoints);
-    if(initialAdvantageInPoints < pdaScalingStartPoints || board.x_size <= 7 || board.y_size <= 7) {
-      desiredDynamicPDAForWhite = 0.0;
+    if(initialAdvantageInPoints < pdaScalingStartPoints) {
+     	if (desiredDynamicPDAForWhite > 10)
+			desiredDynamicPDAForWhite = 0.0;
+		if(board.x_size <= 7 || board.y_size <= 7)
+			desiredDynamicPDAForWhite = 0.0;
     }
     else {
       double desiredDynamicPDAForDisadvantagedPla =
@@ -312,7 +418,7 @@ struct GTPEngine {
   const int analysisPVLen;
   const bool preventEncore;
 
-  const double dynamicPlayoutDoublingAdvantageCapPerOppLead;
+  double dynamicPlayoutDoublingAdvantageCapPerOppLead;
   double staticPlayoutDoublingAdvantage;
   bool staticPDATakesPrecedence;
   double genmoveWideRootNoise;
@@ -475,6 +581,20 @@ struct GTPEngine {
     recentWinLossValues.clear();
     updateDynamicPDA();
   }
+  
+      void setPositionAndRules2(Player pla, const Board& board, const BoardHistory& h, const Board& newInitialBoard, Player newInitialPla, const vector<Move> newMoveHistory) {
+    BoardHistory hist(h);
+    //Ensure we always have this value correct
+    hist.setAssumeMultipleStartingBlackMovesAreHandicap(assumeMultipleStartingBlackMovesAreHandicap);
+
+    currentRules = hist.rules;
+    bot->setPosition(pla,board,hist);
+    initialBoard = newInitialBoard;
+    initialPla = newInitialPla;
+    moveHistory = newMoveHistory;
+    recentWinLossValues.clear();
+   // update  
+   }
 
   void clearBoard() {
     assert(bot->getRootHist().rules == currentRules);
@@ -486,9 +606,59 @@ struct GTPEngine {
     vector<Move> newMoveHistory;
     setPositionAndRules(pla,board,hist,board,pla,newMoveHistory);
     clearStatsForNewGame();
+	updatePlayoutDoublingAdvantageStart();
   }
+  
+    void updateDesiredPDA(double changedPDA) {
+		// if(changedPDA!=0.0)
+	//	isManulPDA = true;
+		// else 
+		   //  isManulPDA=false;
+		//manulDymPDA = false;
+		//	   manulMaxPDA=false;
+		desiredDynamicPDAForWhite = changedPDA;
+		staticPlayoutDoublingAdvantage = changedPDA;
+		params.playoutDoublingAdvantage = changedPDA;
+		bot->setParams(params);
+	}
 
-  bool setPosition(const vector<Move>& initialStones) {
+	void updateDynamicPDACapPerOppLead(double changedPDACapPerOppLead) {
+		staticPDATakesPrecedence = false;
+		dynamicPlayoutDoublingAdvantageCapPerOppLead = changedPDACapPerOppLead;
+		updatePlayoutDoublingAdvantageStart2();	
+	}
+
+	void updateDynamicPDACapPerOppLead2() {
+		staticPDATakesPrecedence = true;
+		dynamicPlayoutDoublingAdvantageCapPerOppLead = 0.0;
+		
+	}
+
+	double getPDA() {
+		return  params.playoutDoublingAdvantage;
+	}
+	double getPDACap() {
+		return  dynamicPlayoutDoublingAdvantageCapPerOppLead;
+	}
+	
+	void updatePlayoutDoublingAdvantageStart() {
+		updatePlayoutDoublingAdvantageHelper2(
+			bot, bot->getRootBoard(), bot->getRootHist(),
+			dynamicPlayoutDoublingAdvantageCapPerOppLead,
+			desiredDynamicPDAForWhite, params
+		);
+	}
+	
+		void updatePlayoutDoublingAdvantageStart2() {
+		updatePlayoutDoublingAdvantageHelper3(
+			bot, bot->getRootBoard(), bot->getRootHist(),
+			dynamicPlayoutDoublingAdvantageCapPerOppLead,
+			desiredDynamicPDAForWhite, params
+		);
+    			
+	}	
+	
+	bool setPosition(const vector<Move>& initialStones) {
     assert(bot->getRootHist().rules == currentRules);
     int newXSize = bot->getRootBoard().x_size;
     int newYSize = bot->getRootBoard().y_size;
@@ -561,8 +731,8 @@ struct GTPEngine {
 
     Board undoneBoard = initialBoard;
     BoardHistory undoneHist(undoneBoard,initialPla,currentRules,0);
-    vector<Move> emptyMoveHistory;
-    setPositionAndRules(initialPla,undoneBoard,undoneHist,initialBoard,initialPla,emptyMoveHistory);
+    vector<Move> emptyMoveHistory;	
+    setPositionAndRules2(initialPla,undoneBoard,undoneHist,initialBoard,initialPla,emptyMoveHistory);
 
     for(int i = 0; i<moveHistoryCopy.size()-1; i++) {
       Loc moveLoc = moveHistoryCopy[i].loc;
@@ -745,6 +915,30 @@ struct GTPEngine {
         cout << out.str() << endl;
       };
     }
+	
+	updatePdas();
+
+			 if(staticPDATakesPrecedence) {
+      if(params.playoutDoublingAdvantage != staticPlayoutDoublingAdvantage) {
+        params.playoutDoublingAdvantage = staticPlayoutDoublingAdvantage;
+        bot->setParams(params);
+      }
+    }
+    else {
+      double desiredDynamicPDA =
+        (params.playoutDoublingAdvantagePla == P_WHITE) ? desiredDynamicPDAForWhite :
+        (params.playoutDoublingAdvantagePla == P_BLACK) ? -desiredDynamicPDAForWhite :
+        (params.playoutDoublingAdvantagePla == C_EMPTY && pla == P_WHITE) ? desiredDynamicPDAForWhite :
+        (params.playoutDoublingAdvantagePla == C_EMPTY && pla == P_BLACK) ? -desiredDynamicPDAForWhite :
+        (assert(false),0.0);
+
+      if(params.playoutDoublingAdvantage != desiredDynamicPDA) {
+        params.playoutDoublingAdvantage = desiredDynamicPDA;
+        bot->setParams(params);
+		printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+      }
+    }
+	
     return callback;
   }
 
@@ -786,6 +980,7 @@ struct GTPEngine {
       if(params.playoutDoublingAdvantage != desiredDynamicPDA) {
         params.playoutDoublingAdvantage = desiredDynamicPDA;
         bot->setParams(params);
+		printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
       }
     }
     Player avoidMYTDaggerHackPla = avoidMYTDaggerHack ? pla : C_EMPTY;
@@ -940,6 +1135,28 @@ struct GTPEngine {
 
     return;
   }
+  
+   void updatePdas()
+	{
+		bool rootstatus = bot->getSearch()->getRootStatus();
+
+		if (rootstatus)
+		{
+			//printf("go2");
+			ReportedSearchValues values;
+			double winLossValue;
+			// double lead;
+			{
+				values = bot->getSearch()->getRootValuesRequireSuccess();
+				winLossValue = values.winLossValue;
+			}
+			recentWinLossValues.push_back(winLossValue);
+			updateDynamicPDA();
+		}
+		else {
+			updatePlayoutDoublingAdvantageStart();
+		}
+	}
 
   void clearCache() {
     bot->clearSearch();
@@ -1030,10 +1247,10 @@ struct GTPEngine {
     assert(args.analyzing);
     //Analysis should ALWAYS be with the static value to prevent random hard-to-predict changes
     //for users.
-    if(params.playoutDoublingAdvantage != staticPlayoutDoublingAdvantage) {
-      params.playoutDoublingAdvantage = staticPlayoutDoublingAdvantage;
-      bot->setParams(params);
-    }
+    //if(params.playoutDoublingAdvantage != staticPlayoutDoublingAdvantage) {
+      //params.playoutDoublingAdvantage = staticPlayoutDoublingAdvantage;
+      //bot->setParams(params);
+    //}
     if(params.avoidMYTDaggerHackPla != C_EMPTY) {
       params.avoidMYTDaggerHackPla = C_EMPTY;
       bot->setParams(params);
@@ -1535,7 +1752,7 @@ int MainCmds::gtp(int argc, const char* const* argv) {
     }
 
     else if(command == "name") {
-      response = "KataGo";
+      response = "KataGoPda";
     }
 
     else if(command == "version") {
@@ -1544,6 +1761,42 @@ int MainCmds::gtp(int argc, const char* const* argv) {
       else
         response = Version::getKataGoVersion();
     }
+	
+	else if (command == "pda")
+		{
+			if (pieces.size() == 1) {
+				double changedPDA = 0;
+				if (Global::tryStringToDouble(pieces[0], changedPDA))
+				{
+					engine->updateDynamicPDACapPerOppLead2();	
+					engine->updateDesiredPDA(changedPDA);									
+					printf("stable PDA mode\n");
+				}
+			}
+		}
+
+		else if (command == "dympdacap")
+		{
+			if (pieces.size() == 1) {
+				double changedPDACap = 0;
+				if (Global::tryStringToDouble(pieces[0], changedPDACap))
+				{
+					engine->updateDynamicPDACapPerOppLead(changedPDACap);					
+					printf("dymPDACap changed\n");
+				}
+			}
+		}
+
+		else if (command == "getpda")
+		{
+			printf("pda: %f\n", engine->getPDA());
+		}
+		else if (command == "getdympdacap")
+		{
+			double pdaCap = engine->getPDACap();
+			printf("PDACap: %f\n", pdaCap);
+		}
+
 
     else if(command == "known_command") {
       if(pieces.size() != 1) {
@@ -2018,8 +2271,8 @@ int MainCmds::gtp(int argc, const char* const* argv) {
         maybeStartPondering = true;
       }
     }
-
-    else if(command == "set_position") {
+	
+	   else if(command == "set_position") {
       if(pieces.size() % 2 != 0) {
         responseIsError = true;
         response = "Expected a space-separated sequence of <COLOR> <VERTEX> pairs but got '" + Global::concat(pieces," ") + "'";
