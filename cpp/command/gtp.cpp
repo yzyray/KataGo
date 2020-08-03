@@ -26,8 +26,9 @@ static const vector<string> knownCommands = {
   //rectangular_boardsize is an alias for boardsize, intended to make it more evident that we have such support
   "boardsize",
   "rectangular_boardsize",
-
+  
   "clear_board",
+  "set_position",
   "komi",
   "play",
   "undo",
