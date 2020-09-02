@@ -63,7 +63,7 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
   vector<int> numThreadsToTest;
   int numPositionsPerGame;
   bool autoTuneThreads;
-  int secondsPerGameMove;
+  double secondsPerGameMove;
   try {
     KataGoCommandLine cmd("Benchmark with gtp config to test speed with different numbers of threads.");
     cmd.addConfigFileArg(KataGoCommandLine::defaultGtpConfigFileName(),"gtp_example.cfg");
@@ -74,7 +74,7 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
     TCLAP::ValueArg<string> sgfFileArg("","sgf", "Optional game to sample positions from (default: uses a built-in-set of positions)",false,string(),"FILE");
     TCLAP::ValueArg<int> boardSizeArg("","boardsize", "Size of board to benchmark on (9-19), default 19",false,-1,"SIZE");
     TCLAP::SwitchArg autoTuneThreadsArg("s","tune","Automatically search for the optimal number of threads (default if not specifying specific numbers of threads)");
-    TCLAP::ValueArg<int> secondsPerGameMoveArg("i","time","Typical amount of time per move spent while playing, in seconds (default " +
+    TCLAP::ValueArg<double> secondsPerGameMoveArg("i","time","Typical amount of time per move spent while playing, in seconds (default " +
                                                Global::doubleToString(defaultSecondsPerGameMove) + ")",false,defaultSecondsPerGameMove,"SECONDS");
     cmd.add(visitsArg);
     cmd.add(threadsArg);
@@ -230,8 +230,8 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
     if(cfg.contains("nnMaxBatchSize"))
       cout << "WARNING: Your nnMaxBatchSize is hardcoded to " + cfg.getString("nnMaxBatchSize") + ", recommend deleting it and using the default (which this benchmark assumes)" << endl;
 #ifdef USE_EIGEN_BACKEND
-    if(cfg.contains("numNNServerThreadsPerModel")) {
-      cout << "WARNING: Your numNNServerThreadsPerModel is hardcoded to " + cfg.getString("numNNServerThreadsPerModel") + ", consider deleting it and using the default (which this benchmark assumes when computing its performance stats)" << endl;
+    if(cfg.contains("numEigenThreadsPerModel")) {
+      cout << "Note: Your numEigenThreadsPerModel is hardcoded to " + cfg.getString("numEigenThreadsPerModel") + ", consider deleting it and using the default (which this benchmark assumes when computing its performance stats)" << endl;
     }
 #endif
 
@@ -267,12 +267,20 @@ static void warmStartNNEval(const CompactSgf* sgf, Logger& logger, const SearchP
 
 static NNEvaluator* createNNEval(int maxNumThreads, CompactSgf* sgf, const string& modelFile, Logger& logger, ConfigParser& cfg, const SearchParams& params) {
   int maxConcurrentEvals = maxNumThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+  int expectedConcurrentEvals = maxNumThreads;
   int defaultMaxBatchSize = std::max(8,((maxNumThreads+3)/4)*4);
 
   Rand seedRand;
 
+#ifdef USE_EIGEN_BACKEND
+  //For warm-starting eigen, we really don't need all that many backend threads, which are determined
+  //via expectedConcurrentEvals.
+  if(expectedConcurrentEvals > 2)
+    expectedConcurrentEvals = 2;
+#endif
+
   NNEvaluator* nnEval = Setup::initializeNNEvaluator(
-    modelFile,modelFile,cfg,logger,seedRand,maxConcurrentEvals,
+    modelFile,modelFile,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
     sgf->xSize,sgf->ySize,defaultMaxBatchSize,
     Setup::SETUP_FOR_BENCHMARK
   );
@@ -712,7 +720,7 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
     cout << endl;
     string prompt =
       "By default, KataGo will cache up to about 3GB of positions in memory (RAM), in addition to\n"
-      "whatever the current search is using. Specify a max in GB or leave blank for default:\n";
+      "whatever the current search is using. Specify a different max in GB or leave blank for default:\n";
     promptAndParseInput(prompt, [&](const string& line) {
         string s = Global::toLower(line);
         if(Global::isSuffix(s,"gb"))

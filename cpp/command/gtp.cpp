@@ -282,27 +282,6 @@ static bool shouldResign(
   return true;
 }
 
-static void printGenmoveLog(ostream& out, const AsyncBot* bot, const NNEvaluator* nnEval, Loc moveLoc, double timeTaken, Player perspective) {
-  const Search* search = bot->getSearch();
-  Board::printBoard(out, bot->getRootBoard(), moveLoc, &(bot->getRootHist().moveHistory));
-  out << bot->getRootHist().rules << "\n";
-  out << "Time taken: " << timeTaken << "\n";
-  out << "Root visits: " << search->getRootVisits() << "\n";
-  out << "New playouts: " << search->lastSearchNumPlayouts << "\n";
-  out << "NN rows: " << nnEval->numRowsProcessed() << endl;
-  out << "NN batches: " << nnEval->numBatchesProcessed() << endl;
-  out << "NN avg batch size: " << nnEval->averageProcessedBatchSize() << endl;
-  if(search->searchParams.playoutDoublingAdvantage != 0)
-    out << "PlayoutDoublingAdvantage: " << (
-      search->getRootPla() == getOpp(search->getPlayoutDoublingAdvantagePla()) ?
-      -search->searchParams.playoutDoublingAdvantage : search->searchParams.playoutDoublingAdvantage) << endl;
-  out << "PV: ";
-  search->printPV(out, search->rootNode, 25);
-  out << "\n";
-  out << "Tree:\n";
-  search->printTree(out, search->rootNode, PrintTreeOptions().maxDepth(1).maxChildrenToShow(10),perspective);
-}
-
 struct GTPEngine {
   GTPEngine(const GTPEngine&) = delete;
   GTPEngine& operator=(const GTPEngine&) = delete;
@@ -423,9 +402,10 @@ struct GTPEngine {
     }
 
     int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+    int expectedConcurrentEvals = params.numThreads;
     int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
     nnEval = Setup::initializeNNEvaluator(
-      nnModelFile,nnModelFile,cfg,logger,seedRand,maxConcurrentEvals,
+      nnModelFile,nnModelFile,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
       boardXSize,boardYSize,defaultMaxBatchSize,
       Setup::SETUP_FOR_GTP
     );
@@ -622,6 +602,8 @@ struct GTPEngine {
     bool showOwnership = false;
     bool showPVVisits = false;
     double secondsPerReport = 1e30;
+    vector<int> avoidMoveUntilByLocBlack;
+    vector<int> avoidMoveUntilByLocWhite;
   };
 
   std::function<void(const Search* search)> getAnalyzeCallback(Player pla, AnalyzeArgs args) {
@@ -822,6 +804,7 @@ struct GTPEngine {
     lastSearchFactor = searchFactor;
 
     Loc moveLoc;
+    bot->setAvoidMoveUntilByLoc(args.avoidMoveUntilByLocBlack,args.avoidMoveUntilByLocWhite);
     if(args.analyzing) {
       std::function<void(const Search* search)> callback = getAnalyzeCallback(pla,args);
       if(args.showOwnership)
@@ -926,11 +909,11 @@ struct GTPEngine {
 
     if(logSearchInfo) {
       ostringstream sout;
-      printGenmoveLog(sout,bot,nnEval,moveLoc,timeTaken,perspective);
+      PlayUtils::printGenmoveLog(sout,bot,nnEval,moveLoc,timeTaken,perspective);
       logger.write(sout.str());
     }
     if(debug) {
-      printGenmoveLog(cerr,bot,nnEval,moveLoc,timeTaken,perspective);
+      PlayUtils::printGenmoveLog(cerr,bot,nnEval,moveLoc,timeTaken,perspective);
     }
 
     //Actual reporting of chosen move---------------------
@@ -1064,6 +1047,7 @@ struct GTPEngine {
     }
 
     std::function<void(Search* search)> callback = getAnalyzeCallback(pla,args);
+    bot->setAvoidMoveUntilByLoc(args.avoidMoveUntilByLocBlack,args.avoidMoveUntilByLocWhite);
     if(args.showOwnership)
       bot->setAlwaysIncludeOwnerMap(true);
     else
@@ -1212,7 +1196,13 @@ struct GTPEngine {
 
 
 //User should pre-fill pla with a default value, as it will not get filled in if the parsed command doesn't specify
-static GTPEngine::AnalyzeArgs parseAnalyzeCommand(const string& command, const vector<string>& pieces, Player& pla, bool& parseFailed) {
+static GTPEngine::AnalyzeArgs parseAnalyzeCommand(
+  const string& command,
+  const vector<string>& pieces,
+  Player& pla,
+  bool& parseFailed,
+  GTPEngine* engine
+) {
   int numArgsParsed = 0;
 
   bool isLZ = (command == "lz-analyze" || command == "lz-genmove_analyze");
@@ -1222,6 +1212,12 @@ static GTPEngine::AnalyzeArgs parseAnalyzeCommand(const string& command, const v
   int maxMoves = 10000000;
   bool showOwnership = false;
   bool showPVVisits = false;
+  vector<int> avoidMoveUntilByLocBlack;
+  vector<int> avoidMoveUntilByLocWhite;
+  bool gotAvoidMovesBlack = false;
+  bool gotAllowMovesBlack = false;
+  bool gotAvoidMovesWhite = false;
+  bool gotAllowMovesWhite = false;
 
   parseFailed = false;
 
@@ -1263,19 +1259,66 @@ static GTPEngine::AnalyzeArgs parseAnalyzeCommand(const string& command, const v
        !isnan(lzAnalyzeInterval) && lzAnalyzeInterval >= 0 && lzAnalyzeInterval < 1e20) {
       continue;
     }
-    //Parse it but ignore it since we don't support excluding moves right now
     else if(key == "avoid" || key == "allow") {
-      //Parse two more arguments, and ignore them
-      if(pieces.size() <= numArgsParsed+1) {
+      //Parse two more arguments
+      if(pieces.size() < numArgsParsed+2) {
         parseFailed = true;
         break;
       }
-      const string& moves = pieces[numArgsParsed];
-      (void)moves;
+      const string& movesStr = pieces[numArgsParsed];
       numArgsParsed += 1;
-      const string& untilMove = pieces[numArgsParsed];
-      (void)untilMove;
+      const string& untilDepthStr = pieces[numArgsParsed];
       numArgsParsed += 1;
+
+      int untilDepth = -1;
+      if(!Global::tryStringToInt(untilDepthStr,untilDepth) || untilDepth < 1) {
+        parseFailed = true;
+        break;
+      }
+      Player avoidPla = C_EMPTY;
+      if(!PlayerIO::tryParsePlayer(value,avoidPla)) {
+        parseFailed = true;
+        break;
+      }
+      vector<Loc> parsedLocs;
+      vector<string> locPieces = Global::split(movesStr,',');
+      for(size_t i = 0; i<locPieces.size(); i++) {
+        string s = Global::trim(locPieces[i]);
+        if(s.size() <= 0)
+          continue;
+        Loc loc;
+        if(!tryParseLoc(s,engine->bot->getRootBoard(),loc)) {
+          parseFailed = true;
+          break;
+        }
+        parsedLocs.push_back(loc);
+      }
+      if(parseFailed)
+        break;
+
+      //Make sure the same analyze command can't specify both avoid and allow, and allow at most one allow.
+      vector<int>& avoidMoveUntilByLoc = avoidPla == P_BLACK ? avoidMoveUntilByLocBlack : avoidMoveUntilByLocWhite;
+      bool& gotAvoidMoves = avoidPla == P_BLACK ? gotAvoidMovesBlack : gotAvoidMovesWhite;
+      bool& gotAllowMoves = avoidPla == P_BLACK ? gotAllowMovesBlack : gotAllowMovesWhite;
+      if((key == "allow" && gotAvoidMoves) || (key == "allow" && gotAllowMoves) || (key == "avoid" && gotAllowMoves)) {
+        parseFailed = true;
+        break;
+      }
+      avoidMoveUntilByLoc.resize(Board::MAX_ARR_SIZE);
+      if(key == "allow") {
+        std::fill(avoidMoveUntilByLoc.begin(),avoidMoveUntilByLoc.end(),untilDepth);
+        for(Loc loc: parsedLocs) {
+          avoidMoveUntilByLoc[loc] = 0;
+        }
+      }
+      else {
+        for(Loc loc: parsedLocs) {
+          avoidMoveUntilByLoc[loc] = untilDepth;
+        }
+      }
+      gotAvoidMoves |= (key == "avoid");
+      gotAllowMoves |= (key == "allow");
+
       continue;
     }
     else if(key == "minmoves" && Global::tryStringToInt(value,minMoves) &&
@@ -1307,6 +1350,8 @@ static GTPEngine::AnalyzeArgs parseAnalyzeCommand(const string& command, const v
   args.maxMoves = maxMoves;
   args.showOwnership = showOwnership;
   args.showPVVisits = showPVVisits;
+  args.avoidMoveUntilByLocBlack = avoidMoveUntilByLocBlack;
+  args.avoidMoveUntilByLocWhite = avoidMoveUntilByLocWhite;
   return args;
 }
 
@@ -1350,8 +1395,8 @@ int MainCmds::gtp(int argc, const char* const* argv) {
     logger.addFile(cfg.getString("logDir") + "/" + DateTime::getCompactDateTimeString() + "-" + Global::uint32ToHexString(rand.nextUInt()) + ".log");
   }
 
-  bool logAllGTPCommunication = cfg.getBool("logAllGTPCommunication");
-  bool logSearchInfo = cfg.getBool("logSearchInfo");
+  const bool logAllGTPCommunication = cfg.getBool("logAllGTPCommunication");
+  const bool logSearchInfo = cfg.getBool("logSearchInfo");
   bool loggingToStderr = false;
 
   bool logTimeStamp = cfg.contains("logTimeStamp") ? cfg.getBool("logTimeStamp") : true;
@@ -2118,7 +2163,7 @@ int MainCmds::gtp(int argc, const char* const* argv) {
     else if(command == "genmove_analyze" || command == "lz-genmove_analyze" || command == "kata-genmove_analyze") {
       Player pla = engine->bot->getRootPla();
       bool parseFailed = false;
-      GTPEngine::AnalyzeArgs args = parseAnalyzeCommand(command, pieces, pla, parseFailed);
+      GTPEngine::AnalyzeArgs args = parseAnalyzeCommand(command, pieces, pla, parseFailed, engine);
       if(parseFailed) {
         responseIsError = true;
         response = "Could not parse genmove_analyze arguments or arguments out of range: '" + Global::concat(pieces," ") + "'";
@@ -2132,6 +2177,7 @@ int MainCmds::gtp(int argc, const char* const* argv) {
           cout << "=" << Global::intToString(id) << endl;
         else
           cout << "=" << endl;
+
         engine->genMove(
           pla,
           logger,searchFactorWhenWinningThreshold,searchFactorWhenWinning,
@@ -2459,7 +2505,7 @@ int MainCmds::gtp(int argc, const char* const* argv) {
     else if(command == "analyze" || command == "lz-analyze" || command == "kata-analyze") {
       Player pla = engine->bot->getRootPla();
       bool parseFailed = false;
-      GTPEngine::AnalyzeArgs args = parseAnalyzeCommand(command, pieces, pla, parseFailed);
+      GTPEngine::AnalyzeArgs args = parseAnalyzeCommand(command, pieces, pla, parseFailed, engine);
 
       if(parseFailed) {
         responseIsError = true;

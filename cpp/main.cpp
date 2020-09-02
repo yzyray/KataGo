@@ -165,11 +165,11 @@ int main(int argc, const char* argv[]) {
 
 
 string Version::getKataGoVersion() {
-  return string("1.5.0");
+  return string("1.6.1");
 }
 
 string Version::getKataGoVersionForHelp() {
-  return string("KataGo v1.5.0");
+  return string("KataGo v1.6.1");
 }
 
 string Version::getKataGoVersionFullInfo() {
@@ -186,6 +186,14 @@ string Version::getKataGoVersionFullInfo() {
 #else
   out << "Using dummy backend" << endl;
 #endif
+
+#if defined(USE_AVX2)
+  out << "Compiled with AVX2 and FMA instructions" << endl;
+#endif
+#if defined(COMPILE_MAX_BOARD_LEN)
+  out << "Compiled to allow boards of size up to " << COMPILE_MAX_BOARD_LEN << endl;
+#endif
+
   return out.str();
 }
 
