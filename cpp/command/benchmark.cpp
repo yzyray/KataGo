@@ -42,7 +42,12 @@ static vector<PlayUtils::BenchmarkResults> doAutoTuneThreads(
   std::function<void(int)> reallocateNNEvalWithEnoughBatchSize
 );
 
+#ifdef USE_EIGEN_BACKEND
+static const int64_t defaultMaxVisits = 80;
+#else
 static const int64_t defaultMaxVisits = 800;
+#endif
+
 static constexpr double defaultSecondsPerGameMove = 5.0;
 static const int ternarySearchInitialMax = 32;
 
@@ -58,7 +63,7 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
   vector<int> numThreadsToTest;
   int numPositionsPerGame;
   bool autoTuneThreads;
-  int secondsPerGameMove;
+  double secondsPerGameMove;
   try {
     KataGoCommandLine cmd("Benchmark with gtp config to test speed with different numbers of threads.");
     cmd.addConfigFileArg(KataGoCommandLine::defaultGtpConfigFileName(),"gtp_example.cfg");
@@ -69,7 +74,7 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
     TCLAP::ValueArg<string> sgfFileArg("","sgf", "Optional game to sample positions from (default: uses a built-in-set of positions)",false,string(),"FILE");
     TCLAP::ValueArg<int> boardSizeArg("","boardsize", "Size of board to benchmark on (9-19), default 19",false,-1,"SIZE");
     TCLAP::SwitchArg autoTuneThreadsArg("s","tune","Automatically search for the optimal number of threads (default if not specifying specific numbers of threads)");
-    TCLAP::ValueArg<int> secondsPerGameMoveArg("i","time","Typical amount of time per move spent while playing, in seconds (default " +
+    TCLAP::ValueArg<double> secondsPerGameMoveArg("i","time","Typical amount of time per move spent while playing, in seconds (default " +
                                                Global::doubleToString(defaultSecondsPerGameMove) + ")",false,defaultSecondsPerGameMove,"SECONDS");
     cmd.add(visitsArg);
     cmd.add(threadsArg);
@@ -224,6 +229,11 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
     cout << "If you care about performance, you may want to edit numSearchThreads in " << cfg.getFileName() << " based on the above results!" << endl;
     if(cfg.contains("nnMaxBatchSize"))
       cout << "WARNING: Your nnMaxBatchSize is hardcoded to " + cfg.getString("nnMaxBatchSize") + ", recommend deleting it and using the default (which this benchmark assumes)" << endl;
+#ifdef USE_EIGEN_BACKEND
+    if(cfg.contains("numEigenThreadsPerModel")) {
+      cout << "Note: Your numEigenThreadsPerModel is hardcoded to " + cfg.getString("numEigenThreadsPerModel") + ", consider deleting it and using the default (which this benchmark assumes when computing its performance stats)" << endl;
+    }
+#endif
 
     cout << "If you intend to do much longer searches, configure the seconds per game move you expect with the '-time' flag and benchmark again." << endl;
     cout << "If you intend to do short or fixed-visit searches, use lower numSearchThreads for better strength, high threads will weaken strength." << endl;
@@ -240,33 +250,43 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
   return 0;
 }
 
+static void warmStartNNEval(const CompactSgf* sgf, Logger& logger, const SearchParams& params, NNEvaluator* nnEval, Rand& seedRand) {
+  Board board(sgf->xSize,sgf->ySize);
+  Player nextPla = P_BLACK;
+  BoardHistory hist(board,nextPla,Rules(),0);
+  SearchParams thisParams = params;
+  thisParams.numThreads = 1;
+  thisParams.maxVisits = 5;
+  thisParams.maxPlayouts = 5;
+  thisParams.maxTime = 1e20;
+  AsyncBot* bot = new AsyncBot(thisParams, nnEval, &logger, Global::uint64ToString(seedRand.nextUInt64()));
+  bot->setPosition(nextPla,board,hist);
+  bot->genMoveSynchronous(nextPla,TimeControls());
+  delete bot;
+}
+
 static NNEvaluator* createNNEval(int maxNumThreads, CompactSgf* sgf, const string& modelFile, Logger& logger, ConfigParser& cfg, const SearchParams& params) {
   int maxConcurrentEvals = maxNumThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+  int expectedConcurrentEvals = maxNumThreads;
   int defaultMaxBatchSize = std::max(8,((maxNumThreads+3)/4)*4);
 
   Rand seedRand;
 
+#ifdef USE_EIGEN_BACKEND
+  //For warm-starting eigen, we really don't need all that many backend threads, which are determined
+  //via expectedConcurrentEvals.
+  if(expectedConcurrentEvals > 2)
+    expectedConcurrentEvals = 2;
+#endif
+
   NNEvaluator* nnEval = Setup::initializeNNEvaluator(
-    modelFile,modelFile,cfg,logger,seedRand,maxConcurrentEvals,
+    modelFile,modelFile,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
     sgf->xSize,sgf->ySize,defaultMaxBatchSize,
     Setup::SETUP_FOR_BENCHMARK
   );
 
   //Run on a sample position just to get any initialization and logs out of the way
-  {
-    Board board(sgf->xSize,sgf->ySize);
-    Player nextPla = P_BLACK;
-    BoardHistory hist(board,nextPla,Rules(),0);
-    SearchParams thisParams = params;
-    thisParams.numThreads = 1;
-    thisParams.maxVisits = 5;
-    thisParams.maxPlayouts = 5;
-    thisParams.maxTime = 1e20;
-    AsyncBot* bot = new AsyncBot(thisParams, nnEval, &logger, Global::uint64ToString(seedRand.nextUInt64()));
-    bot->setPosition(nextPla,board,hist);
-    bot->genMoveSynchronous(nextPla,TimeControls());
-    delete bot;
-  }
+  warmStartNNEval(sgf,logger,params,nnEval,seedRand);
 
   cout.flush();
   cerr.flush();
@@ -279,6 +299,25 @@ static NNEvaluator* createNNEval(int maxNumThreads, CompactSgf* sgf, const strin
   return nnEval;
 }
 
+static void setNumThreads(SearchParams& params, NNEvaluator* nnEval, Logger& logger, int numThreads, const CompactSgf* sgf) {
+  params.numThreads = numThreads;
+#ifdef USE_EIGEN_BACKEND
+  //Eigen is a little interesting in that by default, it sets numNNServerThreadsPerModel based on numSearchThreads
+  //So, reset the number of threads in the nnEval each time we change the search numthreads
+  logger.setLogToStdout(false);
+  nnEval->killServerThreads();
+  nnEval->setNumThreads(vector<int>(numThreads,-1));
+  nnEval->spawnServerThreads();
+  //Also since we killed and respawned all the threads, re-warm them
+  Rand seedRand;
+  warmStartNNEval(sgf,logger,params,nnEval,seedRand);
+#else
+  (void)nnEval;
+  (void)logger;
+  (void)numThreads;
+  (void)sgf;
+#endif
+}
 
 static vector<PlayUtils::BenchmarkResults> doFixedTuneThreads(
   const SearchParams& params,
@@ -298,7 +337,7 @@ static vector<PlayUtils::BenchmarkResults> doFixedTuneThreads(
   for(int i = 0; i<numThreadsToTest.size(); i++) {
     const PlayUtils::BenchmarkResults* baseline = (i == 0) ? NULL : &results[0];
     SearchParams thisParams = params;
-    thisParams.numThreads = numThreadsToTest[i];
+    setNumThreads(thisParams,nnEval,logger,numThreadsToTest[i],sgf);
     PlayUtils::BenchmarkResults result = PlayUtils::benchmarkSearchOnPositionsAndPrint(
       thisParams,
       sgf,
@@ -336,7 +375,7 @@ static vector<PlayUtils::BenchmarkResults> doAutoTuneThreads(
       const PlayUtils::BenchmarkResults* baseline = NULL;
       bool printElo = false;
       SearchParams thisParams = params;
-      thisParams.numThreads = numThreads;
+      setNumThreads(thisParams,nnEval,logger,numThreads,sgf);
       PlayUtils::BenchmarkResults result = PlayUtils::benchmarkSearchOnPositionsAndPrint(
         thisParams,
         sgf,
@@ -654,6 +693,7 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
   cout << "=========================================================================" << endl;
   cout << "GPUS AND RAM" << endl;
 
+#ifndef USE_EIGEN_BACKEND
   {
     cout << endl;
     cout << "Finding available GPU-like devices..." << endl;
@@ -674,12 +714,13 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
         }
       });
   }
+#endif
 
   {
     cout << endl;
     string prompt =
       "By default, KataGo will cache up to about 3GB of positions in memory (RAM), in addition to\n"
-      "whatever the current search is using. Specify a max in GB or leave blank for default:\n";
+      "whatever the current search is using. Specify a different max in GB or leave blank for default:\n";
     promptAndParseInput(prompt, [&](const string& line) {
         string s = Global::toLower(line);
         if(Global::isSuffix(s,"gb"))
