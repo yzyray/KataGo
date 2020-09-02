@@ -518,6 +518,7 @@ int MainCmds::analysis(int argc, const char* const* argv) {
     }
 
     auto parseBoardLocs = [boardXSize,boardYSize,&rbase,&reportErrorForId](const json& dict, const char* field, vector<Loc>& buf, bool allowPass) {
+
       buf.clear();
       if(!dict[field].is_array()) {
         reportErrorForId(rbase.id, field, "Must be an array of GTP board vertices");
@@ -549,6 +550,7 @@ int MainCmds::analysis(int argc, const char* const* argv) {
     auto parseBoardMoves = [boardXSize,boardYSize,&rbase,&reportErrorForId](const json& dict, const char* field, vector<Move>& buf, bool allowPass) {
       buf.clear();
       if(!dict[field].is_array()) {
+
         reportErrorForId(rbase.id, field, "Must be an array of pairs of the form: [\"b\" or \"w\", GTP board vertex]");
         return false;
       }
