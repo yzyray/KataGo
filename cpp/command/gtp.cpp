@@ -610,6 +610,8 @@ struct GTPEngine {
     std::function<void(const Search* search)> callback;
     //lz-analyze
     if(args.lz && !args.kata) {
+      //Avoid capturing anything by reference except [this], since this will potentially be used
+      //asynchronously and called after we return
       callback = [args,pla,this](const Search* search) {
         vector<AnalysisData> buf;
         search->getAnalysisData(buf,args.minMoves,false,analysisPVLen);
@@ -835,7 +837,7 @@ struct GTPEngine {
 
     //Implement cleanupBeforePass hack - the bot wants to pass, so instead cleanup if there is something to clean
     //Make sure we only do it though when it makes sense to do so.
-    if(cleanupBeforePass && moveLoc == Board::PASS_LOC && bot->getRootHist().isFinalPhase()) {
+    if(cleanupBeforePass && moveLoc == Board::PASS_LOC && bot->getRootHist().isFinalPhase() && !bot->getRootHist().hasButton) {
       Board board = bot->getRootBoard();
       BoardHistory hist = bot->getRootHist();
       Color* safeArea = bot->getSearch()->rootSafeArea;
@@ -1046,7 +1048,7 @@ struct GTPEngine {
       bot->setParams(params);
     }
 
-    std::function<void(Search* search)> callback = getAnalyzeCallback(pla,args);
+    std::function<void(const Search* search)> callback = getAnalyzeCallback(pla,args);
     bot->setAvoidMoveUntilByLoc(args.avoidMoveUntilByLocBlack,args.avoidMoveUntilByLocWhite);
     if(args.showOwnership)
       bot->setAlwaysIncludeOwnerMap(true);
@@ -1054,7 +1056,7 @@ struct GTPEngine {
       bot->setAlwaysIncludeOwnerMap(false);
 
     double searchFactor = 1e40; //go basically forever
-    bot->analyze(pla, searchFactor, args.secondsPerReport, callback);
+    bot->analyzeAsync(pla, searchFactor, args.secondsPerReport, callback);
   }
 
   double computeLead(Logger& logger) {
@@ -1425,6 +1427,13 @@ int MainCmds::gtp(int argc, const char* const* argv) {
   if(startupPrintMessageToStderr && !loggingToStderr) {
     cerr << "Using " + initialRules.toStringNoKomiMaybeNice() + " rules initially, unless GTP/GUI overrides this" << endl;
   }
+  bool isForcingKomi = false;
+  float forcedKomi = 0;
+  if(cfg.contains("ignoreGTPAndForceKomi")) {
+    isForcingKomi = true;
+    forcedKomi = cfg.getFloat("ignoreGTPAndForceKomi", Rules::MIN_USER_KOMI, Rules::MAX_USER_KOMI);
+    initialRules.komi = forcedKomi;
+  }
 
   SearchParams initialParams = Setup::loadSingleParams(cfg);
   logger.write("Using " + Global::intToString(initialParams.numThreads) + " CPU thread(s) for search");
@@ -1697,6 +1706,8 @@ int MainCmds::gtp(int argc, const char* const* argv) {
         response = "komi must be an integer or half-integer";
       }
       else {
+        if(isForcingKomi)
+          newKomi = forcedKomi;
         engine->updateKomiIfNew(newKomi);
         //In case the controller tells us komi every move, restart pondering afterward.
         maybeStartPondering = engine->bot->getRootHist().moveHistory.size() > 0;
@@ -2434,6 +2445,9 @@ int MainCmds::gtp(int argc, const char* const* argv) {
               }
             }
 
+            if(isForcingKomi)
+              sgfRules.komi = forcedKomi;
+
             {
               //See if the rules differ, IGNORING komi differences
               Rules currentRules = engine->getCurrentRules();
@@ -2491,12 +2505,12 @@ int MainCmds::gtp(int argc, const char* const* argv) {
       }
       else if(pieces.size() == 0 || pieces[0] == "-") {
         ostringstream out;
-        WriteSgf::writeSgf(out,"","",engine->bot->getRootHist(),NULL,true);
+        WriteSgf::writeSgf(out,"","",engine->bot->getRootHist(),NULL,true,false);
         response = out.str();
       }
       else {
         ofstream out(pieces[0]);
-        WriteSgf::writeSgf(out,"","",engine->bot->getRootHist(),NULL,true);
+        WriteSgf::writeSgf(out,"","",engine->bot->getRootHist(),NULL,true,false);
         out.close();
         response = "";
       }

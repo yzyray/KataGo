@@ -74,6 +74,8 @@ struct Sgf {
     int initialTurnNumber;
     //Hinted move that may be good at the end of position sample, or Board::NULL_LOC
     Loc hintLoc;
+    //The weight of this sample, for random selection
+    double weight;
 
     static std::string toJsonLine(const PositionSample& sample);
     static PositionSample ofJsonLine(const std::string& s);
@@ -99,6 +101,7 @@ struct Sgf {
     PositionSample& sampleBuf,
     int initialTurnNumber,
     std::set<Hash128>& uniqueHashes,
+    std::vector<std::pair<int64_t,int64_t>>& variationTraceNodesBranch,
     std::function<void(PositionSample&,const BoardHistory&)> f
   ) const;
   void samplePositionIfUniqueHelper(
@@ -155,11 +158,14 @@ namespace WriteSgf {
     std::ostream& out, const std::string& bName, const std::string& wName,
     const BoardHistory& endHist,
     const FinishedGameData* gameData,
-    bool tryNicerRulesString
+    bool tryNicerRulesString,
+    bool omitResignPlayerMove
   );
 
-  //If hist is a finished game, print the result to out, else do nothing
+  //If hist is a finished game, print the result to out along with SGF tag, else do nothing
   void printGameResult(std::ostream& out, const BoardHistory& hist);
+  //Get the game result without a surrounding sgf tag
+  std::string gameResultNoSgfTag(const BoardHistory& hist);
 }
 
 #endif  // DATAIO_SGF_H_
