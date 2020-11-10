@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 14)
 
 include_directories(external)
 include_directories(external/tclap-1.2.2/include)
+include_directories(SYSTEM external/filesystem-1.3.6/include) #SYSTEM suppresses a few warnings
 
 #--------------------------- PLATFORM SPECIFIC -------------------------------------------------------------------------
 
@@ -24,13 +25,13 @@ endif()
 
 #--------------------------- CMAKE VARIABLES (partly for Cmake GUI) ----------------------------------------------------
 
+set(BUILD_DISTRIBUTED 0 CACHE BOOL "Build with http support for contributing to distributed training")
 set(USE_BACKEND CACHE STRING "Neural net backend")
 string(TOUPPER "${USE_BACKEND}" USE_BACKEND)
 set_property(CACHE USE_BACKEND PROPERTY STRINGS "" CUDA OPENCL EIGEN)
 
 set(USE_TCMALLOC 0 CACHE BOOL "Use TCMalloc")
 set(NO_GIT_REVISION 0 CACHE BOOL "Disable embedding the git revision into the compiled exe")
-set(Boost_USE_STATIC_LIBS_ON 0 CACHE BOOL "Compile against boost statically instead of dynamically")
 set(USE_AVX2 0 CACHE BOOL "Compile with AVX2")
 set(USE_BIGGER_BOARDS_EXPENSIVE 0 CACHE BOOL "Allow boards up to size 29. Compiling with this Will use more memory and slow down KataGo, even when playing on boards of size 19.")
 
@@ -74,9 +75,77 @@ if(USE_BACKEND STREQUAL "CUDA")
   endif()
 
   set(NEURALNET_BACKEND_SOURCES neuralnet/cudabackend.cpp neuralnet/cudahelpers.cu)
-  set(CMAKE_CUDA_FLAGS
-    "-gencode arch=compute_30,code=sm_30 -gencode arch=compute_30,code=compute_30 -gencode arch=compute_37,code=sm_37 -gencode arch=compute_53,code=sm_53 -gencode arch=compute_53,code=compute_53 -gencode arch=compute_70,code=sm_70 -gencode arch=compute_70,code=compute_70"
-    )
+
+  if (CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 11.0)
+    set(CMAKE_CUDA_FLAGS
+      " \
+      -gencode arch=compute_35,code=sm_35       \
+      -gencode arch=compute_35,code=compute_35  \
+      -gencode arch=compute_37,code=sm_37       \
+      -gencode arch=compute_37,code=compute_37  \
+      -gencode arch=compute_50,code=sm_50       \
+      -gencode arch=compute_50,code=compute_50  \
+      -gencode arch=compute_53,code=sm_53       \
+      -gencode arch=compute_53,code=compute_53  \
+      -gencode arch=compute_60,code=sm_60       \
+      -gencode arch=compute_60,code=compute_60  \
+      -gencode arch=compute_61,code=sm_61       \
+      -gencode arch=compute_61,code=compute_61  \
+      -gencode arch=compute_62,code=sm_62       \
+      -gencode arch=compute_62,code=compute_62  \
+      -gencode arch=compute_70,code=sm_70       \
+      -gencode arch=compute_70,code=compute_70  \
+      -gencode arch=compute_72,code=sm_72       \
+      -gencode arch=compute_72,code=compute_72  \
+      -gencode arch=compute_75,code=sm_75       \
+      -gencode arch=compute_75,code=compute_75  \
+      -gencode arch=compute_80,code=sm_80       \
+      -gencode arch=compute_80,code=compute_80  \
+      -Wno-deprecated-gpu-targets \
+      "
+      )
+  elseif (CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 10.2)
+    set(CMAKE_CUDA_FLAGS
+      " \
+      -gencode arch=compute_30,code=sm_30       \
+      -gencode arch=compute_30,code=compute_30  \
+      -gencode arch=compute_35,code=sm_35       \
+      -gencode arch=compute_35,code=compute_35  \
+      -gencode arch=compute_37,code=sm_37       \
+      -gencode arch=compute_37,code=compute_37  \
+      -gencode arch=compute_50,code=sm_50       \
+      -gencode arch=compute_50,code=compute_50  \
+      -gencode arch=compute_53,code=sm_53       \
+      -gencode arch=compute_53,code=compute_53  \
+      -gencode arch=compute_60,code=sm_60       \
+      -gencode arch=compute_60,code=compute_60  \
+      -gencode arch=compute_61,code=sm_61       \
+      -gencode arch=compute_61,code=compute_61  \
+      -gencode arch=compute_62,code=sm_62       \
+      -gencode arch=compute_62,code=compute_62  \
+      -gencode arch=compute_70,code=sm_70       \
+      -gencode arch=compute_70,code=compute_70  \
+      -gencode arch=compute_72,code=sm_72       \
+      -gencode arch=compute_72,code=compute_72  \
+      -gencode arch=compute_75,code=sm_75       \
+      -gencode arch=compute_75,code=compute_75  \
+      -Wno-deprecated-gpu-targets \
+      "
+      )
+  else()
+      message(WARNING "CUDA 10.2 or greater is recommended, but attempting to build anyways")
+      set(CMAKE_CUDA_FLAGS
+        " \
+        -gencode arch=compute_30,code=sm_30 \
+        -gencode arch=compute_30,code=compute_30 \
+        -gencode arch=compute_37,code=sm_37 \
+        -gencode arch=compute_53,code=sm_53 \
+        -gencode arch=compute_53,code=compute_53 \
+        -gencode arch=compute_70,code=sm_70 \
+        -gencode arch=compute_70,code=compute_70 \
+        "
+        )
+  endif()
 elseif(USE_BACKEND STREQUAL "OPENCL")
   message(STATUS "-DUSE_BACKEND=OPENCL, using OpenCL backend.")
   set(NEURALNET_BACKEND_SOURCES
@@ -205,9 +274,11 @@ add_executable(katago
   tests/testtime.cpp
   tests/testtrainingwrite.cpp
   tests/testnn.cpp
+  distributed/client.cpp
   command/commandline.cpp
   command/analysis.cpp
   command/benchmark.cpp
+  command/contribute.cpp
   command/evalsgf.cpp
   command/gatekeeper.cpp
   command/gtp.cpp
@@ -224,6 +295,7 @@ add_executable(katago
 
 if(USE_BACKEND STREQUAL "CUDA")
   target_compile_definitions(katago PRIVATE USE_CUDA_BACKEND)
+  target_compile_definitions(katago PRIVATE CUDA_TARGET_VERSION=${CMAKE_CUDA_COMPILER_VERSION})
   find_package(CUDA REQUIRED)
   find_path(CUDNN_INCLUDE_DIR cudnn.h HINTS ${CUDNN_ROOT_DIR} ${CUDA_TOOLKIT_ROOT_DIR} PATH_SUFFIXES cuda/include include)
   if((NOT CUDNN_INCLUDE_DIR))
@@ -296,35 +368,23 @@ else()
   target_link_libraries(katago ${LIBZIP_LIBRARY})
 endif()
 
-if(Boost_USE_STATIC_LIBS_ON)
-  set(Boost_USE_STATIC_LIBS ON)
-endif()
-find_package(Boost COMPONENTS system filesystem)
-set(BOOST_ROOT ${BOOST_ROOT} CACHE PATH "Path to root directory containing boost")
-mark_as_advanced(CLEAR BOOST_ROOT)
-if(Boost_FOUND)
-  include_directories(${Boost_INCLUDE_DIRS})
-  target_link_libraries(katago ${Boost_FILESYSTEM_LIBRARY} ${Boost_SYSTEM_LIBRARY})
-else()
-  message(SEND_ERROR "${ColorBoldRed}Unable to find Boost. If boost is actually installed but not being found, please set BOOST_ROOT to the root directory containing Boost or BOOST_INCLUDEDIR to the directory containing Boost's headers. On the command line, this is -DBOOST_ROOT=... or -DBOOST_INCLUDEDIR=... ${ColorReset}")
-endif()
-
 if(USE_TCMALLOC)
   target_link_libraries(katago ${TCMALLOC_LIB})
 endif(USE_TCMALLOC)
 
+if(BUILD_DISTRIBUTED)
+  message("-DBUILD_DISTRIBUTED=1 is set, compiling code and dependencies to contribute to distributed training")
+  target_compile_definitions(katago PRIVATE BUILD_DISTRIBUTED)
+  find_package(OpenSSL REQUIRED)
+  target_link_libraries(katago ${OPENSSL_SSL_LIBRARIES} ${OPENSSL_CRYPTO_LIBRARIES})
+  include_directories(external/httplib)
+endif()
 
 #------------------------------------------------------------------------------------
 
 # add_compile_definitions(NDEBUG)
 
 if(MSVC)
-  # Getting boost to work on MSVC seems to require forcing it to link
-  # with dlls instead of static, and needs this option
-  if(NOT Boost_USE_STATIC_LIBS_ON)
-    target_compile_definitions(katago PRIVATE BOOST_ALL_DYN_LINK)
-  endif()
-
   # Suppress min and max macros on windows
   # Also define a few other things for windows
   target_compile_definitions(katago PRIVATE NOMINMAX)
@@ -368,3 +428,4 @@ if(CMAKE_COMPILER_IS_GNUCC)
 endif()
 
 target_include_directories(katago PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+

@@ -74,7 +74,7 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
 
     bool debugSkipNeuralNetDefault = (nnModelFile == "/dev/null");
     bool debugSkipNeuralNet =
-      setupFor == SETUP_FOR_DISTRIBUTED ? false :
+      setupFor == SETUP_FOR_DISTRIBUTED ? debugSkipNeuralNetDefault :
       cfg.contains("debugSkipNeuralNet") ? cfg.getBool("debugSkipNeuralNet") :
       debugSkipNeuralNetDefault;
 
@@ -241,7 +241,7 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
       cfg.contains("nnCacheSizePowerOfTwo") ? cfg.getInt("nnCacheSizePowerOfTwo", -1, 48) :
       setupFor == SETUP_FOR_GTP ? 20 :
       setupFor == SETUP_FOR_BENCHMARK ? 20 :
-      setupFor == SETUP_FOR_DISTRIBUTED ? 21 :
+      setupFor == SETUP_FOR_DISTRIBUTED ? 19 :
       setupFor == SETUP_FOR_MATCH ? 21 :
       setupFor == SETUP_FOR_ANALYSIS ? 23 :
       cfg.getInt("nnCacheSizePowerOfTwo", -1, 48);
@@ -250,7 +250,7 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
       cfg.contains("nnMutexPoolSizePowerOfTwo") ? cfg.getInt("nnMutexPoolSizePowerOfTwo", -1, 24) :
       setupFor == SETUP_FOR_GTP ? 16 :
       setupFor == SETUP_FOR_BENCHMARK ? 16 :
-      setupFor == SETUP_FOR_DISTRIBUTED ? 17 :
+      setupFor == SETUP_FOR_DISTRIBUTED ? 16 :
       setupFor == SETUP_FOR_MATCH ? 17 :
       setupFor == SETUP_FOR_ANALYSIS ? 17 :
       cfg.getInt("nnMutexPoolSizePowerOfTwo", -1, 24);
@@ -615,6 +615,12 @@ Rules Setup::loadSingleRulesExceptForKomi(
     }
     else
       rules.whiteHandicapBonusRule = Rules::WHB_ZERO;
+
+    //Drop default komi to 6.5 for territory rules, and to 7.0 for button
+    if(rules.scoringRule == Rules::SCORING_TERRITORY)
+      rules.komi = 6.5f;
+    else if(rules.hasButton)
+      rules.komi = 7.0f;
   }
 
   return rules;
