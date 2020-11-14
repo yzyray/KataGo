@@ -29,7 +29,7 @@ struct addPolicy
 
 extern std::vector<addPolicy> extraPolicy;
 extern std::vector<addPolicy> oriPolicy;
-extern std::vector<Loc> extraMaxPolicy;
+extern std::vector<addPolicy> extraMaxPolicy;
 extern bool hasNewExtraPolicy;
 extern bool hasNewMaxPolicy;
 extern bool shouldRestorePolocy;

@@ -1620,32 +1620,32 @@ int MainCmds::gtp(int argc, const char* const* argv) {
       command = pieces[0];
       pieces.erase(pieces.begin());
     
-     if (command=="setpolicy") {
-     Loc loc;
-     double policy;
-     if(pieces.size() != 2  || !Global::tryStringToDouble(pieces[1],policy)
+     if (command=="setpolicy") 
+     {
+         Loc loc;
+         double policy;
+         if(pieces.size() != 2  || !Global::tryStringToDouble(pieces[1],policy)
          ) {
-          cout << "Wrong parameter,should be setpolicy c4 0.3" << endl;
-      cout << endl;
-      }
-     else
-       if(!tryParseLoc(pieces[0],engine->bot->getRootBoard(),loc)) {
-      cout << "Could not parse vertex: '" + pieces[0] + "'" << endl;
-      cout << endl;
-      }
-      else {
-             addPolicy m = {
-    loc,
-    policy
-    };
+             cout << "Wrong parameter,should be setpolicy c4 0.3" << endl;
+             cout << endl;
+         }
+         else
+             if(!tryParseLoc(pieces[0],engine->bot->getRootBoard(),loc)) {
+                 cout << "Could not parse vertex: '" + pieces[0] + "'" << endl;
+                 cout << endl;
+             }
+             else {
+                 addPolicy m = {
+                     loc,
+                     policy
+                 };
                  extraPolicy .push_back(m);
-                    hasNewExtraPolicy = true;      
-                 
+                 hasNewExtraPolicy = true;      
       }
-      cout << "=" << endl;
-      cout << endl;
-     continue;
-}
+         cout << "=" << endl;
+         cout << endl;
+         continue;
+     }
      else if (command == "clearpolicy") {         
           hasNewMaxPolicy = false;
           hasNewExtraPolicy = false;   
@@ -1657,22 +1657,30 @@ int MainCmds::gtp(int argc, const char* const* argv) {
      continue;
      }
      else if (command == "setmaxpolicy") 
-     {        
-        
-     Loc loc;
-   
-       if(!tryParseLoc(pieces[0],engine->bot->getRootBoard(),loc)) {
-      cout << "Could not parse vertex: '" + pieces[0] + "'" << endl;
-      cout << endl;
-       }
-       else {
-                 extraMaxPolicy .push_back(loc);
-                   hasNewMaxPolicy  = true;      
-                   }
-      cout << "=" << endl;
-      cout << endl;
-      
-     continue;
+      {
+         Loc loc;
+         double policy;
+         if(pieces.size() != 2  || !Global::tryStringToDouble(pieces[1],policy)
+         ) {
+             cout << "Wrong parameter,should be setmaxpolicy c4 1.5" << endl;
+             cout << endl;
+         }
+         else
+             if(!tryParseLoc(pieces[0],engine->bot->getRootBoard(),loc)) {
+                 cout << "Could not parse vertex: '" + pieces[0] + "'" << endl;
+                 cout << endl;
+             }
+             else {
+                 addPolicy m = {
+                     loc,
+                     policy
+                 };
+                 extraMaxPolicy .push_back(m);
+                 hasNewMaxPolicy = true;      
+      }
+         cout << "=" << endl;
+         cout << endl;
+         continue;
      }
 
      

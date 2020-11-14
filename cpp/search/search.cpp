@@ -15,7 +15,7 @@ using namespace std;
 
 std::vector<addPolicy> extraPolicy=vector<addPolicy> ();
 std::vector<addPolicy> oriPolicy=vector<addPolicy> ();
-std::vector<Loc> extraMaxPolicy=vector<Loc> ();
+std::vector<addPolicy> extraMaxPolicy=vector<addPolicy> ();
 bool hasNewExtraPolicy= false;
 bool hasNewMaxPolicy= false;
 bool shouldRestorePolocy = false;
@@ -1628,23 +1628,23 @@ void Search::selectBestChildToDescend(
               }
           }
 
-          for (Loc addExtraPolicy : extraMaxPolicy) {
-              int extraPos = getPos(addExtraPolicy); 
+          for (addPolicy addExtraPolicy : extraMaxPolicy) {
+              int extraPos = getPos(addExtraPolicy.loc); 
                  bool hasOriPolicy = false;
            if (oriPolicy.size() > 0)  {              
                for (addPolicy addExtraPolicy2 : oriPolicy) {
-                   if (addExtraPolicy2.loc == addExtraPolicy)
+                   if (addExtraPolicy2.loc == addExtraPolicy.loc)
                        hasOriPolicy = true;
                }
            }
            if (!hasOriPolicy) {
              addPolicy m = {
-                 addExtraPolicy,
+                 addExtraPolicy.loc,
                  policyProbs[extraPos]
                  };
            oriPolicy.push_back(m);
            }
-              policyProbs[extraPos] = min(1.0, maxPolicy*1.1);
+              policyProbs[extraPos] = min(1.0, maxPolicy*addExtraPolicy.policy);
           }
             extraMaxPolicy.clear();
       }    
