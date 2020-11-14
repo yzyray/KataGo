@@ -13,6 +13,11 @@
 
 using namespace std;
 
+
+
+
+
+
 static const vector<string> knownCommands = {
   //Basic GTP commands
   "protocol_version",
@@ -83,6 +88,10 @@ static const vector<string> knownCommands = {
 
   //Stop any ongoing ponder or analyze
   "stop",
+  //new test command
+  "setpolicy",
+  "setmaxpolicy",
+  "clearpolicy",
 };
 
 static bool tryParseLoc(const string& s, const Board& b, Loc& loc) {
@@ -525,6 +534,18 @@ struct GTPEngine {
   }
 
   bool play(Loc loc, Player pla) {
+      if (extraPolicy.size() > 0)
+      {
+       extraPolicy.clear();
+       hasNewExtraPolicy= false;
+  }
+      if (extraMaxPolicy.size() > 0)
+      {
+         extraMaxPolicy.clear();        
+          hasNewMaxPolicy = false;}
+      if (oriPolicy.size() > 0) {
+          oriPolicy.clear();
+      shouldRestorePolocy = false;}
     assert(bot->getRootHist().rules == currentRules);
     bool suc = bot->makeMove(loc,pla,preventEncore);
     if(suc)
@@ -533,6 +554,18 @@ struct GTPEngine {
   }
 
   bool undo() {
+        if (extraPolicy.size() > 0)
+      {
+       extraPolicy.clear();
+       hasNewExtraPolicy= false;
+  }
+      if (extraMaxPolicy.size() > 0)
+      {
+         extraMaxPolicy.clear();        
+          hasNewMaxPolicy = false;}
+      if (oriPolicy.size() > 0) {
+          oriPolicy.clear();
+      shouldRestorePolocy = false;}
     if(moveHistory.size() <= 0)
       return false;
     assert(bot->getRootHist().rules == currentRules);
@@ -1555,20 +1588,9 @@ int MainCmds::gtp(int argc, const char* const* argv) {
 
       line = Global::trim(line);
 
-      //Upon any input line at all, stop any analysis and output a newline
-      if(currentlyAnalyzing) {
-        currentlyAnalyzing = false;
-        engine->stopAndWait();
-        cout << endl;
-      }
-
-      if(line.length() == 0)
+        if(line.length() == 0)
         continue;
-
-      if(logAllGTPCommunication)
-        logger.write("Controller: " + line);
-
-      //Parse id number of command, if present
+          //Parse id number of command, if present
       size_t digitPrefixLen = 0;
       while(digitPrefixLen < line.length() && Global::isDigit(line[digitPrefixLen]))
         digitPrefixLen++;
@@ -1597,6 +1619,103 @@ int MainCmds::gtp(int argc, const char* const* argv) {
 
       command = pieces[0];
       pieces.erase(pieces.begin());
+    
+     if (command=="setpolicy") {
+     Loc loc;
+     double policy;
+     if(pieces.size() != 2  || !Global::tryStringToDouble(pieces[1],policy)
+         ) {
+          cout << "Wrong parameter,should be setpolicy c4 0.3" << endl;
+      cout << endl;
+      }
+     else
+       if(!tryParseLoc(pieces[0],engine->bot->getRootBoard(),loc)) {
+      cout << "Could not parse vertex: '" + pieces[0] + "'" << endl;
+      cout << endl;
+      }
+      else {
+             addPolicy m = {
+    loc,
+    policy
+    };
+                 extraPolicy .push_back(m);
+                    hasNewExtraPolicy = true;      
+                 
+      }
+      cout << "=" << endl;
+      cout << endl;
+     continue;
+}
+     else if (command == "clearpolicy") {         
+          hasNewMaxPolicy = false;
+          hasNewExtraPolicy = false;   
+         extraPolicy.clear();
+         extraMaxPolicy.clear();   
+      shouldRestorePolocy = true;
+           cout << "=" << endl;
+      cout << endl;
+     continue;
+     }
+     else if (command == "setmaxpolicy") 
+     {        
+        
+     Loc loc;
+   
+       if(!tryParseLoc(pieces[0],engine->bot->getRootBoard(),loc)) {
+      cout << "Could not parse vertex: '" + pieces[0] + "'" << endl;
+      cout << endl;
+       }
+       else {
+                 extraMaxPolicy .push_back(loc);
+                   hasNewMaxPolicy  = true;      
+                   }
+      cout << "=" << endl;
+      cout << endl;
+      
+     continue;
+     }
+
+     
+      //Upon any input line at all, stop any analysis and output a newline
+      if(currentlyAnalyzing) {
+        currentlyAnalyzing = false;
+        engine->stopAndWait();
+        cout << endl;
+      }
+
+
+      if(logAllGTPCommunication)
+        logger.write("Controller: " + line);
+
+      ////Parse id number of command, if present
+      //size_t digitPrefixLen = 0;
+      //while(digitPrefixLen < line.length() && Global::isDigit(line[digitPrefixLen]))
+      //  digitPrefixLen++;
+      //if(digitPrefixLen > 0) {
+      //  hasId = true;
+      //  try {
+      //    id = Global::parseDigits(line,0,digitPrefixLen);
+      //  }
+      //  catch(const IOError& e) {
+      //    cout << "? GTP id '" << id << "' could not be parsed: " << e.what() << endl;
+      //    continue;
+      //  }
+      //  line = line.substr(digitPrefixLen);
+      //}
+
+      //line = Global::trim(line);
+      //if(line.length() <= 0) {
+      //  cout << "? empty command" << endl;
+      //  continue;
+      //}
+
+      //pieces = Global::split(line,' ');
+      //for(size_t i = 0; i<pieces.size(); i++)
+      //  pieces[i] = Global::trim(pieces[i]);
+      //assert(pieces.size() > 0);
+
+      //command = pieces[0];
+      //pieces.erase(pieces.begin());
     }
 
     bool responseIsError = false;
@@ -1999,6 +2118,8 @@ int MainCmds::gtp(int argc, const char* const* argv) {
         }
       }
     }
+
+  
 
     else if(command == "time_left") {
       Player pla;
@@ -2516,7 +2637,7 @@ int MainCmds::gtp(int argc, const char* const* argv) {
       }
     }
 
-    else if(command == "analyze" || command == "lz-analyze" || command == "kata-analyze") {
+    else if(command == "analyze" || command == "lz-analyze" || command == "kata-analyze") {    
       Player pla = engine->bot->getRootPla();
       bool parseFailed = false;
       GTPEngine::AnalyzeArgs args = parseAnalyzeCommand(command, pieces, pla, parseFailed, engine);

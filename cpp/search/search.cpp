@@ -13,6 +13,13 @@
 
 using namespace std;
 
+std::vector<addPolicy> extraPolicy=vector<addPolicy> ();
+std::vector<addPolicy> oriPolicy=vector<addPolicy> ();
+std::vector<Loc> extraMaxPolicy=vector<Loc> ();
+bool hasNewExtraPolicy= false;
+bool hasNewMaxPolicy= false;
+bool shouldRestorePolocy = false;
+
 ReportedSearchValues::ReportedSearchValues()
 {}
 ReportedSearchValues::~ReportedSearchValues()
@@ -964,11 +971,13 @@ void Search::addDirichletNoise(const SearchParams& searchParams, Rand& rand, int
 //Assumes node is locked
 void Search::maybeAddPolicyNoiseAndTempAlreadyLocked(SearchThread& thread, SearchNode& node, bool isRoot) const {
   if(!isRoot)
-    return;
-  if(!searchParams.rootNoiseEnabled && searchParams.rootPolicyTemperature == 1.0 && searchParams.rootPolicyTemperatureEarly == 1.0 && rootHintLoc == Board::NULL_LOC)
+    return; 
+        if(!searchParams.rootNoiseEnabled && searchParams.rootPolicyTemperature == 1.0 && searchParams.rootPolicyTemperatureEarly == 1.0 && rootHintLoc == Board::NULL_LOC)
     return;
   if(node.nnOutput->noisedPolicyProbs != NULL)
     return;
+      
+
 
   //Copy nnOutput as we're about to modify its policy to add noise or temperature
   {
@@ -981,6 +990,7 @@ void Search::maybeAddPolicyNoiseAndTempAlreadyLocked(SearchThread& thread, Searc
   node.nnOutput->noisedPolicyProbs = noisedPolicyProbs;
   std::copy(node.nnOutput->policyProbs, node.nnOutput->policyProbs + NNPos::MAX_NN_POLICY_SIZE, noisedPolicyProbs);
 
+  
   if(searchParams.rootPolicyTemperature != 1.0 || searchParams.rootPolicyTemperatureEarly != 1.0) {
     double rootPolicyTemperature = interpolateEarly(
       searchParams.chosenMoveTemperatureHalflife, searchParams.rootPolicyTemperatureEarly, searchParams.rootPolicyTemperature
@@ -1017,7 +1027,7 @@ void Search::maybeAddPolicyNoiseAndTempAlreadyLocked(SearchThread& thread, Searc
   if(searchParams.rootNoiseEnabled) {
     addDirichletNoise(searchParams, thread.rand, policySize, noisedPolicyProbs);
   }
-
+   
   //Move a small amount of policy to the hint move, around the same level that noising it would achieve
   if(rootHintLoc != Board::NULL_LOC) {
     const float propToMove = 0.02f;
@@ -1033,6 +1043,7 @@ void Search::maybeAddPolicyNoiseAndTempAlreadyLocked(SearchThread& thread, Searc
       noisedPolicyProbs[pos] += (float)amountToMove;
     }
   }
+  
 }
 
 bool Search::isAllowedRootMove(Loc moveLoc) const {
@@ -1580,11 +1591,85 @@ void Search::selectBestChildToDescend(
   double policyProbMassVisited = 0.0;
   int64_t totalChildVisits = 0;
   float* policyProbs = node.nnOutput->getPolicyProbsMaybeNoised();
+  if (isRoot) {
+  if (hasNewExtraPolicy) {
+      hasNewExtraPolicy = false;
+      if (extraPolicy.size() > 0) {
+        for (addPolicy addExtraPolicy : extraPolicy) {
+           int extraPos= getPos(addExtraPolicy.loc);
+            bool hasOriPolicy = false;
+           if (oriPolicy.size() > 0)  {              
+               for (addPolicy addExtraPolicy2 : oriPolicy) {
+                   if (addExtraPolicy2.loc == addExtraPolicy.loc)
+                       hasOriPolicy = true;
+               }
+           }
+           if (!hasOriPolicy) {
+             addPolicy m = {
+                 addExtraPolicy.loc,
+                 policyProbs[extraPos]
+                 };
+           oriPolicy.push_back(m);
+           }
+           policyProbs[extraPos]= min(1.0,addExtraPolicy.policy);          
+        }
+        extraPolicy.clear();
+    }
+       }
+  if (hasNewMaxPolicy) {
+      hasNewMaxPolicy = false;
+      if (extraMaxPolicy.size() > 0) {
+          double maxPolicy = 0;
+          for (int s = 0; s < NNPos::MAX_NN_POLICY_SIZE; s++)
+          {
+              if (policyProbs[s] > maxPolicy)
+              {
+                  maxPolicy = policyProbs[s];
+              }
+          }
+
+          for (Loc addExtraPolicy : extraMaxPolicy) {
+              int extraPos = getPos(addExtraPolicy); 
+                 bool hasOriPolicy = false;
+           if (oriPolicy.size() > 0)  {              
+               for (addPolicy addExtraPolicy2 : oriPolicy) {
+                   if (addExtraPolicy2.loc == addExtraPolicy)
+                       hasOriPolicy = true;
+               }
+           }
+           if (!hasOriPolicy) {
+             addPolicy m = {
+                 addExtraPolicy,
+                 policyProbs[extraPos]
+                 };
+           oriPolicy.push_back(m);
+           }
+              policyProbs[extraPos] = min(1.0, maxPolicy*1.1);
+          }
+            extraMaxPolicy.clear();
+      }    
+  }
+  if (shouldRestorePolocy) {
+      shouldRestorePolocy = false;
+   if (oriPolicy.size() > 0) {
+        for (addPolicy addExtraPolicy : oriPolicy) {
+           int extraPos= getPos(addExtraPolicy.loc);
+           policyProbs[extraPos]= min(1.0,addExtraPolicy.policy);          
+        }
+          oriPolicy.clear();
+    } 
+  }
+  }
+
   for(int i = 0; i<numChildren; i++) {
     const SearchNode* child = node.children[i];
     Loc moveLoc = child->prevMoveLoc;
     int movePos = getPos(moveLoc);
     float nnPolicyProb = policyProbs[movePos];
+
+    
+    
+  
     policyProbMassVisited += nnPolicyProb;
 
     while(child->statsLock.test_and_set(std::memory_order_acquire));
@@ -1595,8 +1680,8 @@ void Search::selectBestChildToDescend(
   }
   //Probability mass should not sum to more than 1, giving a generous allowance
   //for floating point error.
-  assert(policyProbMassVisited <= 1.0001);
-
+   //   assert(policyProbMassVisited <= 1.0001);
+  
   //First play urgency
   double parentUtility;
   double fpuValue = getFpuValueForChildrenAssumeVisited(node, thread.pla, isRoot, policyProbMassVisited, parentUtility);
@@ -1608,6 +1693,9 @@ void Search::selectBestChildToDescend(
     const SearchNode* child = node.children[i];
     Loc moveLoc = child->prevMoveLoc;
     bool isDuringSearch = true;
+
+       
+   
     double selectionValue = getExploreSelectionValue(node,policyProbs,child,totalChildVisits,fpuValue,parentUtility,isDuringSearch,&thread);
     if(selectionValue > maxSelectionValue) {
       maxSelectionValue = selectionValue;
@@ -1647,6 +1735,9 @@ void Search::selectBestChildToDescend(
     }
 
     float nnPolicyProb = policyProbs[movePos];
+
+ 
+  
     if(searchParams.antiMirror && mirroringPla != C_EMPTY) {
       maybeApplyAntiMirrorPolicy(nnPolicyProb, moveLoc, policyProbs, node.nextPla, &thread, this);
     }
@@ -1666,6 +1757,23 @@ void Search::selectBestChildToDescend(
   }
 
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 void Search::updateStatsAfterPlayout(SearchNode& node, SearchThread& thread, int32_t virtualLossesToSubtract, bool isRoot) {
   recomputeNodeStats(node,thread,1,virtualLossesToSubtract,isRoot);
 }

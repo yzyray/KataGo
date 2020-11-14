@@ -21,6 +21,21 @@ struct SearchNode;
 struct SearchThread;
 struct Search;
 struct DistributionTable;
+struct addPolicy
+{
+    Loc loc;
+    double policy;
+};
+
+extern std::vector<addPolicy> extraPolicy;
+extern std::vector<addPolicy> oriPolicy;
+extern std::vector<Loc> extraMaxPolicy;
+extern bool hasNewExtraPolicy;
+extern bool hasNewMaxPolicy;
+extern bool shouldRestorePolocy;
+//extern  vector<addPolicy> extraPolicy;
+
+
 
 struct ReportedSearchValues {
   double winValue;
