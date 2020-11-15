@@ -254,6 +254,7 @@ add_executable(katago
   search/searchresults.cpp
   search/asyncbot.cpp
   search/distributiontable.cpp
+  search/subtreevaluebiastable.cpp
   search/analysisdata.cpp
   program/gtpconfig.cpp
   program/setup.cpp
@@ -403,7 +404,7 @@ if(MSVC)
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCC)
-  if(NOT (${CMAKE_SYSTEM_PROCESSOR} MATCHES "arm"))
+  if(NOT (${CMAKE_SYSTEM_PROCESSOR} MATCHES "(arm|aarch32|aarch64)"))
     set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -mfpmath=sse")
   endif()
   if(USE_AVX2)
