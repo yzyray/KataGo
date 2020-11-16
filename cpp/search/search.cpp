@@ -13,13 +13,6 @@
 
 using namespace std;
 
-std::vector<addPolicy> extraPolicy=vector<addPolicy> ();
-std::vector<addPolicy> oriPolicy=vector<addPolicy> ();
-std::vector<addPolicy> extraMaxPolicy=vector<addPolicy> ();
-bool hasNewExtraPolicy= false;
-bool hasNewMaxPolicy= false;
-bool shouldRestorePolocy = false;
-
 ReportedSearchValues::ReportedSearchValues()
 {}
 ReportedSearchValues::~ReportedSearchValues()
@@ -212,6 +205,50 @@ Player Search::getRootPla() const {
 
 Player Search::getPlayoutDoublingAdvantagePla() const {
   return searchParams.playoutDoublingAdvantagePla == C_EMPTY ? plaThatSearchIsFor : searchParams.playoutDoublingAdvantagePla;
+}
+
+
+bool Search::restorePolicy() {    
+     if (rootNode==NULL)
+        return false;
+        if (rootNode->nnOutput->hasCopyedPolicy)  {    
+              float* policyProbs = rootNode->nnOutput->getPolicyProbsMaybeNoised();
+               float* policyProbsOri =  rootNode->nnOutput->getPolicyProbsOri();
+               for (int s = 0; s <NNPos::MAX_NN_POLICY_SIZE; s++)
+                   policyProbs[s] = policyProbsOri[s];
+               return true;
+           } 
+        else
+                 return false;
+}
+
+bool Search::setPolicy(bool isMax,Loc loc,float policy) {
+      if (rootNode==NULL)
+        return false;
+      float* policyProbs = rootNode->nnOutput->getPolicyProbsMaybeNoised();
+  
+         if (!rootNode->nnOutput->hasCopyedPolicy)  {    
+                 rootNode->nnOutput->hasCopyedPolicy = true;
+               float* policyProbsOri =  rootNode->nnOutput->getPolicyProbsOri();
+               for (int s = 0; s <NNPos::MAX_NN_POLICY_SIZE; s++)
+                   policyProbsOri[s] = policyProbs[s];
+           }  
+            int pos = getPos(loc); 
+     if (isMax) {
+          float maxPolicy = 0;
+          for (int s = 0; s < NNPos::MAX_NN_POLICY_SIZE; s++)
+          {
+              if (policyProbs[s] > maxPolicy)
+              {
+                  maxPolicy = policyProbs[s];
+              }
+          }           
+            policyProbs[pos] = min(1.0f, maxPolicy*policy);    
+  }
+     else  {
+           policyProbs[pos]= min(1.0f,policy);   
+    }  
+     return true;
 }
 
 void Search::setPosition(Player pla, const Board& board, const BoardHistory& history) {
@@ -1612,7 +1649,6 @@ double Search::getFpuValueForChildrenAssumeVisited(const SearchNode& node, Playe
   return fpuValue;
 }
 
-
 //Assumes node is locked
 void Search::selectBestChildToDescend(
   SearchThread& thread, const SearchNode& node, int& bestChildIdx, Loc& bestChildMoveLoc,
@@ -1630,85 +1666,12 @@ void Search::selectBestChildToDescend(
   double policyProbMassVisited = 0.0;
   int64_t totalChildVisits = 0;
   float* policyProbs = node.nnOutput->getPolicyProbsMaybeNoised();
-  if (isRoot) {
-  if (hasNewExtraPolicy) {
-      hasNewExtraPolicy = false;
-      if (extraPolicy.size() > 0) {
-        for (addPolicy addExtraPolicy : extraPolicy) {
-           int extraPos= getPos(addExtraPolicy.loc);
-            bool hasOriPolicy = false;
-           if (oriPolicy.size() > 0)  {              
-               for (addPolicy addExtraPolicy2 : oriPolicy) {
-                   if (addExtraPolicy2.loc == addExtraPolicy.loc)
-                       hasOriPolicy = true;
-               }
-           }
-           if (!hasOriPolicy) {
-             addPolicy m = {
-                 addExtraPolicy.loc,
-                 policyProbs[extraPos]
-                 };
-           oriPolicy.push_back(m);
-           }
-           policyProbs[extraPos]= min(1.0,addExtraPolicy.policy);          
-        }
-        extraPolicy.clear();
-    }
-       }
-  if (hasNewMaxPolicy) {
-      hasNewMaxPolicy = false;
-      if (extraMaxPolicy.size() > 0) {
-          double maxPolicy = 0;
-          for (int s = 0; s < NNPos::MAX_NN_POLICY_SIZE; s++)
-          {
-              if (policyProbs[s] > maxPolicy)
-              {
-                  maxPolicy = policyProbs[s];
-              }
-          }
-
-          for (addPolicy addExtraPolicy : extraMaxPolicy) {
-              int extraPos = getPos(addExtraPolicy.loc); 
-                 bool hasOriPolicy = false;
-           if (oriPolicy.size() > 0)  {              
-               for (addPolicy addExtraPolicy2 : oriPolicy) {
-                   if (addExtraPolicy2.loc == addExtraPolicy.loc)
-                       hasOriPolicy = true;
-               }
-           }
-           if (!hasOriPolicy) {
-             addPolicy m = {
-                 addExtraPolicy.loc,
-                 policyProbs[extraPos]
-                 };
-           oriPolicy.push_back(m);
-           }
-              policyProbs[extraPos] = min(1.0, maxPolicy*addExtraPolicy.policy);
-          }
-            extraMaxPolicy.clear();
-      }    
-  }
-  if (shouldRestorePolocy) {
-      shouldRestorePolocy = false;
-   if (oriPolicy.size() > 0) {
-        for (addPolicy addExtraPolicy : oriPolicy) {
-           int extraPos= getPos(addExtraPolicy.loc);
-           policyProbs[extraPos]= min(1.0,addExtraPolicy.policy);          
-        }
-          oriPolicy.clear();
-    } 
-  }
-  }
 
   for(int i = 0; i<numChildren; i++) {
     const SearchNode* child = node.children[i];
     Loc moveLoc = child->prevMoveLoc;
     int movePos = getPos(moveLoc);
     float nnPolicyProb = policyProbs[movePos];
-
-    
-    
-  
     policyProbMassVisited += nnPolicyProb;
 
     while(child->statsLock.test_and_set(std::memory_order_acquire));

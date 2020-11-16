@@ -532,20 +532,15 @@ struct GTPEngine {
       desiredDynamicPDAForWhite
     );
   }
+  bool setPolicy(bool isMax,Loc loc,float policy) {
+     return  bot->setPolicy(isMax,loc,policy);
+  }
+
+  bool restorePolicy() {
+     return bot->restorePolicy();
+  }
 
   bool play(Loc loc, Player pla) {
-      if (extraPolicy.size() > 0)
-      {
-       extraPolicy.clear();
-       hasNewExtraPolicy= false;
-  }
-      if (extraMaxPolicy.size() > 0)
-      {
-         extraMaxPolicy.clear();        
-          hasNewMaxPolicy = false;}
-      if (oriPolicy.size() > 0) {
-          oriPolicy.clear();
-      shouldRestorePolocy = false;}
     assert(bot->getRootHist().rules == currentRules);
     bool suc = bot->makeMove(loc,pla,preventEncore);
     if(suc)
@@ -554,18 +549,6 @@ struct GTPEngine {
   }
 
   bool undo() {
-        if (extraPolicy.size() > 0)
-      {
-       extraPolicy.clear();
-       hasNewExtraPolicy= false;
-  }
-      if (extraMaxPolicy.size() > 0)
-      {
-         extraMaxPolicy.clear();        
-          hasNewMaxPolicy = false;}
-      if (oriPolicy.size() > 0) {
-          oriPolicy.clear();
-      shouldRestorePolocy = false;}
     if(moveHistory.size() <= 0)
       return false;
     assert(bot->getRootHist().rules == currentRules);
@@ -1623,8 +1606,8 @@ int MainCmds::gtp(int argc, const char* const* argv) {
      if (command=="setpolicy") 
      {
          Loc loc;
-         double policy;
-         if(pieces.size() != 2  || !Global::tryStringToDouble(pieces[1],policy)
+         float policy;
+         if(pieces.size() != 2  || !Global::tryStringToFloat(pieces[1],policy)
          ) {
              cout << "Wrong parameter,should be setpolicy c4 0.3" << endl;
              cout << endl;
@@ -1635,34 +1618,23 @@ int MainCmds::gtp(int argc, const char* const* argv) {
                  cout << endl;
              }
              else {
-                 addPolicy m = {
-                     loc,
-                     policy
-                 };
-                 extraPolicy .push_back(m);
-                 hasNewExtraPolicy = true;      
+                 if (!engine->setPolicy(false, loc, policy))
+                 {
+                     cout << "Failed to set policy maybe not analyzing" << endl;
+                     cout << endl;
+                 }
       }
          cout << "=" << endl;
          cout << endl;
          continue;
-     }
-     else if (command == "clearpolicy") {         
-          hasNewMaxPolicy = false;
-          hasNewExtraPolicy = false;   
-         extraPolicy.clear();
-         extraMaxPolicy.clear();   
-      shouldRestorePolocy = true;
-           cout << "=" << endl;
-      cout << endl;
-     continue;
-     }
-     else if (command == "setmaxpolicy") 
-      {
+     }  
+     else if (command=="setmaxpolicy") 
+     {
          Loc loc;
-         double policy;
-         if(pieces.size() != 2  || !Global::tryStringToDouble(pieces[1],policy)
+         float policy;
+         if(pieces.size() != 2  || !Global::tryStringToFloat(pieces[1],policy)
          ) {
-             cout << "Wrong parameter,should be setmaxpolicy c4 1.5" << endl;
+             cout << "Wrong parameter,should be setpolicy c4 0.3" << endl;
              cout << endl;
          }
          else
@@ -1671,16 +1643,25 @@ int MainCmds::gtp(int argc, const char* const* argv) {
                  cout << endl;
              }
              else {
-                 addPolicy m = {
-                     loc,
-                     policy
-                 };
-                 extraMaxPolicy .push_back(m);
-                 hasNewMaxPolicy = true;      
+                 if (!engine->setPolicy(true, loc, policy))
+                 {
+                     cout << "Failed to set policy maybe not analyzing" << endl;
+                     cout << endl;
+                 }
       }
          cout << "=" << endl;
          cout << endl;
          continue;
+     }
+        else if (command == "clearpolicy") {     
+         if (!engine->restorePolicy())
+         {
+          cout << "Failed to clear policy maybe never set policy or not analyzing" << endl;
+          cout << endl;
+         }
+         cout << "=" << endl;
+         cout << endl;
+     continue;
      }
 
      
