@@ -114,6 +114,8 @@ struct NNOutput {
   //Indexed by pos rather than loc
   //Values in here will be set to negative for illegal moves, including superko
   float policyProbs[NNPos::MAX_NN_POLICY_SIZE];
+  bool hasCopyedPolicy=false;
+  float policyProbsOri[NNPos::MAX_NN_POLICY_SIZE];
 
   int nnXLen;
   int nnYLen;
@@ -134,6 +136,7 @@ struct NNOutput {
   NNOutput& operator=(const NNOutput&);
 
   inline float* getPolicyProbsMaybeNoised() { return noisedPolicyProbs != NULL ? noisedPolicyProbs : policyProbs; }
+  inline float* getPolicyProbsOri() { return policyProbsOri; }
   void debugPrint(std::ostream& out, const Board& board);
 };
 

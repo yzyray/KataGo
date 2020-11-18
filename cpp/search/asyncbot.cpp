@@ -67,6 +67,16 @@ SearchParams AsyncBot::getParams() const {
   return search->searchParams;
 }
 
+bool AsyncBot::setPolicy(bool isMax,Loc loc,float policy) {
+    if (!isRunning)
+        return false;
+    return  search->setPolicy( isMax, loc, policy);
+}
+
+bool AsyncBot::restorePolicy() {
+    return search->restorePolicy();
+}
+
 void AsyncBot::setPosition(Player pla, const Board& board, const BoardHistory& history) {
   stopAndWait();
   search->setPosition(pla,board,history);

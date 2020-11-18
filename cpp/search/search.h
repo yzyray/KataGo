@@ -23,6 +23,9 @@ struct SearchThread;
 struct Search;
 struct DistributionTable;
 
+
+
+
 struct ReportedSearchValues {
   double winValue;
   double lossValue;
@@ -218,7 +221,9 @@ struct Search {
   Player getPlayoutDoublingAdvantagePla() const;
 
   //Clear all results of search and sets a new position or something else
-  void setPosition(Player pla, const Board& board, const BoardHistory& history);
+  bool setPolicy(bool isMax, Loc loc, float policy);
+  bool restorePolicy();
+  void setPosition(Player pla, const Board& board, const BoardHistory& history);  
 
   void setPlayerAndClearHistory(Player pla);
   void setKomiIfNew(float newKomi); //Does not clear history, does clear search unless komi is equal.
@@ -409,6 +414,8 @@ private:
 
   void maybeRecomputeNormToTApproxTable();
   double getNormToTApproxForLCB(int64_t numVisits) const;
+
+
 
   void selectBestChildToDescend(
     SearchThread& thread, const SearchNode& node, int& bestChildIdx, Loc& bestChildMoveLoc,
