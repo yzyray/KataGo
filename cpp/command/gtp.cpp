@@ -2927,7 +2927,7 @@ int MainCmds::gtp(int argc, const char* const* argv) {
       engine->ponder();
 
   } //Close read loop
-
+  }
   delete engine;
   engine = NULL;
   NeuralNet::globalCleanup();
