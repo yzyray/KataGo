@@ -2,9 +2,6 @@ import sys
 import random
 import numpy as np
 
-class IllegalMoveError(ValueError):
-  pass
-
 #Implements legal moves without superko
 class Board:
   EMPTY = 0
@@ -293,9 +290,9 @@ class Board:
   #Set a given location with error checking. Suicide setting allowed.
   def set_stone(self,pla,loc):
     if pla != Board.EMPTY and pla != Board.BLACK and pla != Board.WHITE:
-      raise IllegalMoveError("Invalid pla for board.set")
+      raise ValueError("Invalid pla for board.set")
     if not self.is_on_board(loc):
-      raise IllegalMoveError("Invalid loc for board.set")
+      raise ValueError("Invalid loc for board.set")
 
     if self.board[loc] == pla:
       pass
@@ -315,17 +312,17 @@ class Board:
   #Single stone suicide is disallowed but suicide is allowed, to support rule sets and sgfs that have suicide
   def play(self,pla,loc):
     if pla != Board.BLACK and pla != Board.WHITE:
-      raise IllegalMoveError("Invalid pla for board.play")
+      raise ValueError("Invalid pla for board.play")
 
     if loc != Board.PASS_LOC:
       if not self.is_on_board(loc):
-        raise IllegalMoveError("Invalid loc for board.set")
+        raise ValueError("Invalid loc for board.set")
       if self.board[loc] != Board.EMPTY:
-        raise IllegalMoveError("Location is nonempty")
+        raise ValueError("Location is nonempty")
       if self.would_be_single_stone_suicide(pla,loc):
-        raise IllegalMoveError("Move would be illegal single stone suicide")
+        raise ValueError("Move would be illegal single stone suicide")
       if loc == self.simple_ko_point:
-        raise IllegalMoveError("Move would be illegal simple ko recapture")
+        raise ValueError("Move would be illegal simple ko recapture")
 
     self.playUnsafe(pla,loc)
 

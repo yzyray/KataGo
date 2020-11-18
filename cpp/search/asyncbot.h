@@ -28,8 +28,6 @@ class AsyncBot {
 
   //Setup, same as in search.h
   //Calling any of these will stop any ongoing search, waiting for a full stop.
-  bool setPolicy(bool isMax,Loc loc,float policy);
-  bool restorePolicy();
   void setPosition(Player pla, const Board& board, const BoardHistory& history);
   void setKomiIfNew(float newKomi);
   void setRootHintLoc(Loc loc);

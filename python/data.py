@@ -5,14 +5,13 @@ from sgfmill import sgf_properties as Sgf_properties
 from board import Board
 
 class Metadata:
-  def __init__(self, size, bname, wname, brank, wrank, komi, handicap):
+  def __init__(self, size, bname, wname, brank, wrank, komi):
     self.size = size
     self.bname = bname
     self.wname = wname
     self.brank = brank
     self.wrank = wrank
     self.komi = komi
-    self.handicap = handicap
 
 #Returns (metadata, list of setup stones, list of move stones)
 #Setup and move stones are both pairs of (pla,loc)
@@ -90,7 +89,6 @@ def load_sgf_moves_exn(path):
   wrank = (root.get("WR") if root.has_property("WR") else None)
   komi = (root.get("KM") if root.has_property("KM") else None)
   rulesstr = (root.get("RU") if root.has_property("RU") else None)
-  handicap = (root.get("HA") if root.has_property("HA") else None)
 
   rules = None
   if rulesstr is not None:
@@ -159,5 +157,5 @@ def load_sgf_moves_exn(path):
       else:
         raise Exception("Could not parse rules: " + origrulesstr)
 
-  metadata = Metadata(size, bname, wname, brank, wrank, komi, handicap)
+  metadata = Metadata(size, bname, wname, brank, wrank, komi)
   return metadata, setup, moves, rules

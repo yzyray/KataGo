@@ -881,7 +881,7 @@ void Search::getAnalysisData(
     }
     //Probability mass should not sum to more than 1, giving a generous allowance
     //for floating point error.
-   // assert(policyProbMassVisited <= 1.0001);
+    assert(policyProbMassVisited <= 1.0001);
   }
 
   double parentWinLossValue;
@@ -1014,7 +1014,7 @@ void Search::printTree(ostream& out, const SearchNode* node, PrintTreeOptions op
     double parentLead = 0;
     data = getAnalysisDataOfSingleChild(
       node, scratchLocs, scratchValues,
-      (node == rootNode ? Board::NULL_LOC : node->prevMoveLoc), policyProb, fpuValue, parentUtility, parentWinLossValue,
+      node->prevMoveLoc, policyProb, fpuValue, parentUtility, parentWinLossValue,
       parentScoreMean, parentScoreStdev, parentLead, options.maxPVDepth_
     );
     data.weightFactor = NAN;

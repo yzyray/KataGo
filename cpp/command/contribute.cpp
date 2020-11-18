@@ -36,6 +36,7 @@ using namespace std;
 
 static std::atomic<bool> sigReceived(false);
 static std::atomic<bool> shouldStop(false);
+static std::atomic<int> sigPipeReceivedCount(0);
 static void signalHandler(int signal)
 {
   if(signal == SIGINT || signal == SIGTERM) {
@@ -44,9 +45,6 @@ static void signalHandler(int signal)
   }
 }
 
-// Some OSes, like windows, don't have SIGPIPE
-#ifdef SIGPIPE
-static std::atomic<int> sigPipeReceivedCount(0);
 static void sigPipeHandler(int signal)
 {
   if(signal == SIGPIPE) {
@@ -58,7 +56,7 @@ static void sigPipeHandlerDoNothing(int signal)
 {
   (void)signal;
 }
-#endif
+
 
 //-----------------------------------------------------------------------------------------
 
@@ -170,7 +168,7 @@ static void runAndUploadSingleGame(
       (*outputEachMove) << out.str() << std::flush;
     }
   };
-
+  
   const Sgf::PositionSample* posSample = gameTask.repIdx < gameTask.task.startPoses.size() ? &(gameTask.task.startPoses[gameTask.repIdx]) : NULL;
   FinishedGameData* gameData = gameRunner->runGame(
     seed, botSpecB, botSpecW, forkData, posSample,
@@ -361,7 +359,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   string serverUrl = userCfg->getString("serverUrl");
   string username = userCfg->getString("username");
   string password = userCfg->getString("password");
-
+  
   int maxSimultaneousGames;
   if(!userCfg->contains("maxSimultaneousGames")) {
     logger.write("maxSimultaneousGames was NOT specified in config, defaulting to 16");
@@ -375,8 +373,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   const bool watchOngoingGameInFile = userCfg->contains("watchOngoingGameInFile") ? userCfg->getBool("watchOngoingGameInFile") : false;
   string watchOngoingGameInFileName = userCfg->contains("watchOngoingGameInFileName") ? userCfg->getString("watchOngoingGameInFileName") : "";
   if(watchOngoingGameInFileName == "")
-    watchOngoingGameInFileName = "watchgame.txt";
-
+    watchOngoingGameInFileName = "watchgame.txt"; 
+  
   //Connect to server and get global parameters for the run.
   Client::Connection* connection = new Client::Connection(serverUrl,username,password,caCertsFile,&logger);
   const Client::RunParameters runParams = connection->getRunParameters();
@@ -409,7 +407,6 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   std::signal(SIGINT, signalHandler);
   std::signal(SIGTERM, signalHandler);
 
-#ifdef SIGPIPE
   //We want to make sure sigpipe doesn't kill us, since sigpipe is hard to avoid with network connections if internet is flickery
   if(!std::atomic_is_lock_free(&sigPipeReceivedCount)) {
     logger.write("sigPipeReceivedCount is not lock free, we will just ignore sigpipe outright");
@@ -418,7 +415,6 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   else {
     std::signal(SIGPIPE, sigPipeHandler);
   }
-#endif
 
   //We only ever allow one chunk of rating games at a time right now.
   const int maxSimultaneousRatingGames = taskRepFactor;
@@ -451,7 +447,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     std::unique_ptr<std::ostream> outputEachMove = nullptr;
     if(gameLoopThreadIdx == 0 && watchOngoingGameInFile)
       outputEachMove = std::make_unique<std::ofstream>(watchOngoingGameInFileName.c_str(), ofstream::app);
-
+    
     Rand thisLoopSeedRand;
     while(true) {
       GameTask gameTask;
@@ -555,13 +551,13 @@ int MainCmds::contribute(int argc, const char* const* argv) {
           timeDiff, movesDiff, movesDiff/timeDiff, numNNEvalsDiff, numNNEvalsDiff/timeDiff
         )
       );
-
+      
       lastPerformanceTime = now;
       lastPerformanceNumMoves = newNumMoves;
       lastPerformanceNumNNEvals = newNumNNEvals;
     }
   };
-
+  
   //Loop acquiring tasks and feeding them to game threads
   bool anyTaskSuccessfullyParsedYet = false;
   while(true) {
@@ -569,13 +565,10 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     std::this_thread::sleep_for(std::chrono::duration<double>(1.0));
     if(shouldStop.load())
       break;
-
-#ifdef SIGPIPE
     while(sigPipeReceivedCount.load() > 0) {
       sigPipeReceivedCount.fetch_add(-1);
       logger.write("Note: SIGPIPE received at some point, it's possible this is from bad internet rather than a broke shell pipe, so ignoring rather than killing the program.");
     }
-#endif
 
     bool retryOnFailure = anyTaskSuccessfullyParsedYet;
     //Only allow rating tasks when existing tasks are entirely done, and models are all unloaded
