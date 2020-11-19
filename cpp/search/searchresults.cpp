@@ -289,16 +289,6 @@ bool Search::getRootValues(ReportedSearchValues& values) const {
   return getNodeValues(*rootNode,values);
 }
 
-bool Search::getRootStatus() const{
-	if(rootNode==NULL)
-	  return false;
-  else
-  {
-	  ReportedSearchValues values;
-	  return getNodeValues(*rootNode,values);
-  }	  
-}
-
 ReportedSearchValues Search::getRootValuesRequireSuccess() const {
   ReportedSearchValues values;
   if(rootNode == NULL)
