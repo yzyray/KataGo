@@ -12,6 +12,7 @@
 #include "../main.h"
 
 using namespace std;
+ extern bool isPdaMode = false;
 
 static const vector<string> knownCommands = {
   //Basic GTP commands
@@ -213,7 +214,10 @@ static void updatePlayoutDoublingAdvantageHelper2(
 		if (params.playoutDoublingAdvantage != desiredPlayoutDoublingAdvantage) {
 			params.playoutDoublingAdvantage = desiredPlayoutDoublingAdvantage;
 			bot->setParams(params);
-			printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+            if (isPdaMode)
+            {
+                printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+            }
 		}
 	}
 }
@@ -259,7 +263,10 @@ static void updatePlayoutDoublingAdvantageHelper3(
 		if (params.playoutDoublingAdvantage != desiredPlayoutDoublingAdvantage) {
 			params.playoutDoublingAdvantage = desiredPlayoutDoublingAdvantage;
 			bot->setParams(params);
-			printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+            if (isPdaMode)
+            {
+                printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+            }
 		}
 	}
 }
@@ -928,8 +935,10 @@ struct GTPEngine {
       };
     }
 	
-	updatePdas();
-
+    if (isPdaMode)
+    {
+        updatePdas();
+    }
 			 if(staticPDATakesPrecedence) {
       if(params.playoutDoublingAdvantage != staticPlayoutDoublingAdvantage) {
         params.playoutDoublingAdvantage = staticPlayoutDoublingAdvantage;
@@ -947,7 +956,10 @@ struct GTPEngine {
       if(params.playoutDoublingAdvantage != desiredDynamicPDA) {
         params.playoutDoublingAdvantage = desiredDynamicPDA;
         bot->setParams(params);
-		printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+        if (isPdaMode)
+        {
+            printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+        }
       }
     }
 	
@@ -992,7 +1004,10 @@ struct GTPEngine {
       if(params.playoutDoublingAdvantage != desiredDynamicPDA) {
         params.playoutDoublingAdvantage = desiredDynamicPDA;
         bot->setParams(params);
-		printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+        if (isPdaMode)
+        {
+            printf("\nPDA: %f\n", params.playoutDoublingAdvantage);
+        }
       }
     }
     Player avoidMYTDaggerHackPla = avoidMYTDaggerHack ? pla : C_EMPTY;
@@ -1260,10 +1275,13 @@ struct GTPEngine {
     assert(args.analyzing);
     //Analysis should ALWAYS be with the static value to prevent random hard-to-predict changes
     //for users.
-    //if(params.playoutDoublingAdvantage != staticPlayoutDoublingAdvantage) {
-      //params.playoutDoublingAdvantage = staticPlayoutDoublingAdvantage;
-      //bot->setParams(params);
-    //}
+    if (!isPdaMode)
+    {
+        if (params.playoutDoublingAdvantage != staticPlayoutDoublingAdvantage) {
+            params.playoutDoublingAdvantage = staticPlayoutDoublingAdvantage;
+            bot->setParams(params);
+        }
+    }
     if(params.avoidMYTDaggerHackPla != C_EMPTY) {
       params.avoidMYTDaggerHackPla = C_EMPTY;
       bot->setParams(params);
@@ -1596,6 +1614,7 @@ int MainCmds::gtp(int argc, const char* const* argv) {
   ConfigParser cfg;
   string nnModelFile;
   string overrideVersion;
+ 
   try {
     KataGoCommandLine cmd("Run KataGo main GTP engine for playing games or casual analysis.");
     cmd.addConfigFileArg(KataGoCommandLine::defaultGtpConfigFileName(),"gtp_example.cfg");
@@ -1625,6 +1644,10 @@ int MainCmds::gtp(int argc, const char* const* argv) {
     MakeDir::make(cfg.getString("logDir"));
     Rand rand;
     logger.addFile(cfg.getString("logDir") + "/" + DateTime::getCompactDateTimeString() + "-" + Global::uint32ToHexString(rand.nextUInt()) + ".log");
+  }
+  if (cfg.contains("enableDymanicPdaInAnalyze"))
+  {
+      isPdaMode= cfg.getBool("enableDymanicPdaInAnalyze");
   }
 
   const bool logAllGTPCommunication = cfg.getBool("logAllGTPCommunication");
@@ -1899,7 +1922,13 @@ int MainCmds::gtp(int argc, const char* const* argv) {
     }
 
     else if(command == "name") {
-      response = "KataGoPda";
+        if (isPdaMode)
+        {
+             response = "KataGoPda";
+        }
+        else {
+            response = "KataGo";
+        }     
     }
 
     else if(command == "version") {
