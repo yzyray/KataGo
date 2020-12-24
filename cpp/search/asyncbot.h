@@ -20,6 +20,8 @@ class AsyncBot {
   Player getPlayoutDoublingAdvantagePla() const;
   SearchParams getParams() const;
 
+  bool setPolicy(bool isMax,Loc loc,float policy);
+  bool restorePolicy();
   //Get the search directly. If the asyncbot is doing anything asynchronous, the search MAY STILL BE RUNNING!
   const Search* getSearch() const;
   //Get the search, after stopping and waiting to terminate any existing search

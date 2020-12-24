@@ -207,6 +207,49 @@ Player Search::getPlayoutDoublingAdvantagePla() const {
   return searchParams.playoutDoublingAdvantagePla == C_EMPTY ? plaThatSearchIsFor : searchParams.playoutDoublingAdvantagePla;
 }
 
+bool Search::restorePolicy() {    
+     if (rootNode==NULL)
+        return false;
+        if (rootNode->nnOutput->hasCopyedPolicy)  {    
+              float* policyProbs = rootNode->nnOutput->getPolicyProbsMaybeNoised();
+               float* policyProbsOri =  rootNode->nnOutput->getPolicyProbsOri();
+               for (int s = 0; s <NNPos::MAX_NN_POLICY_SIZE; s++)
+                   policyProbs[s] = policyProbsOri[s];
+               return true;
+           } 
+        else
+                 return false;
+}
+
+bool Search::setPolicy(bool isMax,Loc loc,float policy) {
+      if (rootNode==NULL)
+        return false;
+      float* policyProbs = rootNode->nnOutput->getPolicyProbsMaybeNoised();
+  
+         if (!rootNode->nnOutput->hasCopyedPolicy)  {    
+                 rootNode->nnOutput->hasCopyedPolicy = true;
+               float* policyProbsOri =  rootNode->nnOutput->getPolicyProbsOri();
+               for (int s = 0; s <NNPos::MAX_NN_POLICY_SIZE; s++)
+                   policyProbsOri[s] = policyProbs[s];
+           }  
+            int pos = getPos(loc); 
+     if (isMax) {
+          float maxPolicy = 0;
+          for (int s = 0; s < NNPos::MAX_NN_POLICY_SIZE; s++)
+          {
+              if (policyProbs[s] > maxPolicy)
+              {
+                  maxPolicy = policyProbs[s];
+              }
+          }           
+            policyProbs[pos] = min(1.0f, maxPolicy*policy);    
+  }
+     else  {
+           policyProbs[pos]= min(1.0f,policy);   
+    }  
+     return true;
+}
+
 void Search::setPosition(Player pla, const Board& board, const BoardHistory& history) {
   clearSearch();
   rootPla = pla;

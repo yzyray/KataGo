@@ -217,6 +217,8 @@ struct Search {
   Player getRootPla() const;
   Player getPlayoutDoublingAdvantagePla() const;
 
+  bool setPolicy(bool isMax, Loc loc, float policy);
+  bool restorePolicy();
   //Clear all results of search and sets a new position or something else
   void setPosition(Player pla, const Board& board, const BoardHistory& history);
 
@@ -290,6 +292,7 @@ struct Search {
 
   //Get the values recorded for the root node, if possible.
   bool getRootValues(ReportedSearchValues& values) const;
+  bool getRootStatus() const;
   //Same, same, but throws an exception if no values could be obtained
   ReportedSearchValues getRootValuesRequireSuccess() const;
   //Same, but works on a node within the search, not just the root
