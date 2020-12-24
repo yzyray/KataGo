@@ -891,7 +891,7 @@ void Search::getAnalysisData(
     }
     //Probability mass should not sum to more than 1, giving a generous allowance
     //for floating point error.
-    assert(policyProbMassVisited <= 1.0001);
+   // assert(policyProbMassVisited <= 1.0001);
   }
 
   double parentWinLossValue;
