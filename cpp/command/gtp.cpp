@@ -1635,7 +1635,7 @@ int MainCmds::gtp(int argc, const char* const* argv) {
     Rand rand;
     logger.addFile(cfg.getString("logDir") + "/" + DateTime::getCompactDateTimeString() + "-" + Global::uint32ToHexString(rand.nextUInt()) + ".log");
   }
-   if (cfg.contains("enableDymanicPdaInAnalyze")) {
+   if (cfg.contains("enableDynamicPdaInAnalyze")) {
        isPdaMode= cfg.getBool("enableDymanicPdaInAnalyze");
    }
 
