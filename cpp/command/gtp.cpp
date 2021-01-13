@@ -1645,7 +1645,7 @@ int MainCmds::gtp(int argc, const char* const* argv) {
     logger.addFile(cfg.getString("logDir") + "/" + DateTime::getCompactDateTimeString() + "-" + Global::uint32ToHexString(rand.nextUInt()) + ".log");
   }
    if (cfg.contains("enableDynamicPdaInAnalyze")) {
-       isPdaMode= cfg.getBool("enableDymanicPdaInAnalyze");
+       isPdaMode= cfg.getBool("enableDynamicPdaInAnalyze");
    }
 
   const bool logAllGTPCommunication = cfg.getBool("logAllGTPCommunication");
