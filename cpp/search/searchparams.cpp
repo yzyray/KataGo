@@ -38,6 +38,7 @@ SearchParams::SearchParams()
    useLcbForSelection(false),
    lcbStdevs(4.0),
    minVisitPropForLCB(0.05),
+   useNonBuggyLcb(false),
    rootEndingBonusPoints(0.0),
    rootPruneUselessMoves(false),
    conservativePass(false),
@@ -63,7 +64,16 @@ SearchParams::SearchParams()
    maxTimePondering(1.0e20),
    lagBuffer(0.0),
    searchFactorAfterOnePass(1.0),
-   searchFactorAfterTwoPass(1.0)
+   searchFactorAfterTwoPass(1.0),
+   treeReuseCarryOverTimeFactor(0.0),
+   overallocateTimeFactor(1.0),
+   midgameTimeFactor(1.0),
+   midgameTurnPeakTime(130.0),
+   endgameTurnTimeDecay(100.0),
+   obviousMovesTimeFactor(1.0),
+   obviousMovesPolicyEntropyTolerance(0.30),
+   obviousMovesPolicySurpriseTolerance(0.15),
+   futileVisitsThreshold(0.0)
 {}
 
 SearchParams::~SearchParams()
@@ -86,6 +96,7 @@ SearchParams SearchParams::forTestsV1() {
   params.rootEndingBonusPoints = 0.5;
   params.rootPruneUselessMoves = true;
   params.conservativePass = true;
+  params.useNonBuggyLcb = true;
   return params;
 }
 

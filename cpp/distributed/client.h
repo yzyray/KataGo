@@ -7,6 +7,7 @@
 #include "../core/rand.h"
 #include "../distributed/httplib_wrapper.h"
 #include "../core/multithread.h"
+#include "../core/throttle.h"
 #include "../dataio/sgf.h"
 #include "../dataio/trainingwrite.h"
 
@@ -62,6 +63,8 @@ namespace Client {
       const std::string& caCertsFile,
       const std::string& proxyHost,
       int proxyPort,
+      const std::string& modelDownloadMirrorBaseUrl,
+      bool mirrorUseProxy,
       Logger* logger
     );
     ~Connection();
@@ -78,6 +81,7 @@ namespace Client {
       Task& task,
       const std::string& baseDir,
       bool retryOnFailure,
+      bool allowSelfplayTask,
       bool allowRatingTask,
       int taskRepFactor,
       std::atomic<bool>& shouldStop
@@ -93,6 +97,9 @@ namespace Client {
       const Client::ModelInfo& modelInfo, const std::string& modelDir,
       std::atomic<bool>& shouldStop
     );
+    bool isModelPresent(
+      const Client::ModelInfo& modelInfo, const std::string& modelDir
+    ) const;
 
     //Query server for newest model and maybe download it, even if it is not being used by tasks yet.
     bool maybeDownloadNewestModel(
@@ -132,16 +139,24 @@ namespace Client {
     std::string proxyHost;
     int proxyPort;
 
+    std::string modelDownloadMirrorBaseUrl;
+    bool mirrorUseProxy;
+
     //Fixed string different on every startup but shared across all requests for this run of the client
     std::string clientInstanceId;
 
     Logger* logger;
     Rand rand;
 
+    //Mutex to guard downloadStateByUrl, which manages what threads are downloading or waiting on downloads
     std::mutex downloadStateMutex;
     std::map<std::string,std::shared_ptr<DownloadState>> downloadStateByUrl;
 
-    //TODO if httplib is thread-safe, then we can remove this
+    //Limit number of simul downloads to limit network pressure
+    Throttle downloadThrottle;
+    static constexpr int MAX_SIMUL_DOWNLOADS = 3;
+
+    //General mutex for all http operations besides model download
     std::mutex mutex;
 
     void recreateClients();

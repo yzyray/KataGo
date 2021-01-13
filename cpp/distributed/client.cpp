@@ -5,6 +5,7 @@
 #include "../core/config_parser.h"
 #include "../core/sha2.h"
 #include "../core/timer.h"
+#include "../core/os.h"
 #include "../game/board.h"
 #include "../neuralnet/modelversion.h"
 #include "../neuralnet/desc.h"
@@ -77,9 +78,9 @@ static json parseJson(const httplib::Result& response) {
 //Hacky custom URL parsing, probably isn't fully general but should be good enough for now.
 struct Url {
   string originalString;
-  bool isSSL;
+  bool isSSL = true;
   string host;
-  int port;
+  int port = 0;
   string path;
 
   static Url parse(const string& s) {
@@ -126,7 +127,34 @@ struct Url {
 
     return ret;
   }
+
+  void replacePath(const string& newPath) {
+    originalString = "";
+    if(isSSL)
+      originalString += "https://";
+    else
+      originalString += "http://";
+    originalString += host;
+    if((isSSL && port != 443) || (!isSSL && port != 80))
+      originalString += ":" + Global::intToString(port);
+    originalString += newPath;
+    path = newPath;
+  }
 };
+
+static void configureSocketOptions(socket_t sock) {
+  constexpr int timeoutSeconds = 20;
+#ifdef OS_IS_UNIX_OR_APPLE
+  struct timeval tv;
+  tv.tv_sec = timeoutSeconds;
+  tv.tv_usec = 0;
+  setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const void*)&tv, sizeof(tv));
+#endif
+#ifdef OS_IS_WINDOWS
+  DWORD timeout = timeoutSeconds * 1000;
+  setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+#endif
+}
 
 static httplib::Result oneShotDownload(
   Logger* logger,
@@ -134,8 +162,8 @@ static httplib::Result oneShotDownload(
   const string& caCertsFile,
   const string& proxyHost,
   const int& proxyPort,
-  size_t startByte,
-  size_t endByte,
+  size_t startByte, //inclusive
+  size_t endByte, //inclusive
   std::function<bool(const char *data, size_t data_length)> f
 ) {
   httplib::Headers headers;
@@ -145,6 +173,7 @@ static httplib::Result oneShotDownload(
 
   if(!url.isSSL) {
     std::unique_ptr<httplib::Client> httpClient = std::make_unique<httplib::Client>(url.host, url.port);
+    httpClient->set_socket_options(configureSocketOptions);
     if(proxyHost != "")
       httpClient->set_proxy(proxyHost.c_str(), proxyPort);
     //Avoid automatically decompressing .bin.gz files that get sent to us with "content-encoding: gzip"
@@ -153,6 +182,7 @@ static httplib::Result oneShotDownload(
   }
   else {
     std::unique_ptr<httplib::SSLClient> httpsClient = std::make_unique<httplib::SSLClient>(url.host, url.port);
+    httpsClient->set_socket_options(configureSocketOptions);
     if(proxyHost != "")
       httpsClient->set_proxy(proxyHost.c_str(), proxyPort);
     httpsClient->set_ca_cert_path(caCertsFile.c_str());
@@ -178,6 +208,8 @@ Connection::Connection(
   const string& caCerts,
   const string& pHost,
   int pPort,
+  const string& mdmbu,
+  const bool mup,
   Logger* lg
 )
   :httpClient(),
@@ -190,9 +222,14 @@ Connection::Connection(
    caCertsFile(caCerts),
    proxyHost(pHost),
    proxyPort(pPort),
+   modelDownloadMirrorBaseUrl(mdmbu),
+   mirrorUseProxy(mup),
    clientInstanceId(),
    logger(lg),
    rand(),
+   downloadStateMutex(),
+   downloadStateByUrl(),
+   downloadThrottle(Connection::MAX_SIMUL_DOWNLOADS),
    mutex()
 {
   Url url;
@@ -201,6 +238,15 @@ Connection::Connection(
   }
   catch(const StringError& e) {
     throw StringError(string("Could not parse serverUrl in config: ") + e.what());
+  }
+  if(modelDownloadMirrorBaseUrl != "") {
+    try {
+      Url mirrorUrl = Url::parse(modelDownloadMirrorBaseUrl);
+      (void)mirrorUrl;
+    }
+    catch(const StringError& e) {
+      throw StringError(string("Could not parse modelDownloadMirrorBaseUrl in config: ") + e.what());
+    }
   }
 
   isSSL = url.isSSL;
@@ -224,6 +270,7 @@ Connection::Connection(
 
   if(!isSSL) {
     httpClient = std::make_unique<httplib::Client>(url.host, url.port);
+    httpClient->set_socket_options(configureSocketOptions);
     if(proxyHost != "")
       httpClient->set_proxy(proxyHost.c_str(),proxyPort);
   }
@@ -236,6 +283,7 @@ Connection::Connection(
     }
 
     httpsClient = std::make_unique<httplib::SSLClient>(url.host, url.port);
+    httpsClient->set_socket_options(configureSocketOptions);
     if(proxyHost != "")
       httpsClient->set_proxy(proxyHost.c_str(),proxyPort);
     httpsClient->set_ca_cert_path(caCertsFile.c_str());
@@ -264,7 +312,6 @@ Connection::Connection(
 
 void Connection::recreateClients() {
   std::lock_guard<std::mutex> lock(mutex);
-  logger->write("DEBUG: Recreating httplib clients");
   httpClient = nullptr;
   httpsClient = nullptr;
 
@@ -272,12 +319,14 @@ void Connection::recreateClients() {
 
   if(!isSSL) {
     httpClient = std::make_unique<httplib::Client>(url.host, url.port);
+    httpClient->set_socket_options(configureSocketOptions);
     if(proxyHost != "")
       httpClient->set_proxy(proxyHost.c_str(),proxyPort);
     httpClient->set_basic_auth(username.c_str(), password.c_str());
   }
   else {
     httpsClient = std::make_unique<httplib::SSLClient>(url.host, url.port);
+    httpsClient->set_socket_options(configureSocketOptions);
     if(proxyHost != "")
       httpsClient->set_proxy(proxyHost.c_str(),proxyPort);
     httpsClient->set_ca_cert_path(caCertsFile.c_str());
@@ -544,7 +593,15 @@ static Client::ModelInfo parseModelInfo(const json& networkProperties) {
   return model;
 }
 
-bool Connection::getNextTask(Task& task, const string& baseDir, bool retryOnFailure, bool allowRatingTask, int taskRepFactor, std::atomic<bool>& shouldStop) {
+bool Connection::getNextTask(
+  Task& task,
+  const string& baseDir,
+  bool retryOnFailure,
+  bool allowSelfplayTask,
+  bool allowRatingTask,
+  int taskRepFactor,
+  std::atomic<bool>& shouldStop
+) {
   (void)baseDir;
 
   auto f = [&](int& loopFailMode) {
@@ -556,7 +613,7 @@ bool Connection::getNextTask(Task& task, const string& baseDir, bool retryOnFail
         { "git_revision", Version::getGitRevision(), "", "" },
         { "client_instance_id", clientInstanceId, "", "" },
         { "task_rep_factor", Global::intToString(taskRepFactor), "", ""},
-        { "allow_selfplay_task", "true", "", ""},
+        { "allow_selfplay_task", (allowSelfplayTask ? "true" : "false"), "", ""},
         { "allow_rating_task", (allowRatingTask ? "true" : "false"), "", ""},
       };
       httplib::Result postResult = postMulti("/api/tasks/",items);
@@ -636,7 +693,7 @@ bool Connection::getNextTask(Task& task, const string& baseDir, bool retryOnFail
     try {
       istringstream taskCfgIn(task.config);
       ConfigParser taskCfg(taskCfgIn);
-      SearchParams baseParams = Setup::loadSingleParams(taskCfg);
+      SearchParams baseParams = Setup::loadSingleParams(taskCfg,Setup::SETUP_FOR_DISTRIBUTED);
       PlaySettings playSettings;
       if(task.isRatingGame)
         playSettings = PlaySettings::loadForGatekeeper(taskCfg);
@@ -706,6 +763,19 @@ Client::DownloadState::DownloadState()
 Client::DownloadState::~DownloadState()
 {}
 
+bool Connection::isModelPresent(
+  const Client::ModelInfo& modelInfo, const string& modelDir
+) const {
+  if(modelInfo.isRandom)
+    return true;
+
+  const string path = getModelPath(modelInfo,modelDir);
+  //Model already exists
+  if(gfs::exists(gfs::path(path)))
+    return true;
+  return false;
+}
+
 bool Connection::downloadModelIfNotPresent(
   const Client::ModelInfo& modelInfo, const string& modelDir,
   std::atomic<bool>& shouldStop
@@ -727,13 +797,13 @@ bool Connection::downloadModelIfNotPresent(
     {
       auto iter = downloadStateByUrl.find(modelInfo.downloadUrl);
       if(iter != downloadStateByUrl.end()) {
-        logger->write("DEBUG: Other thread is downloading model already, sleeping");
+        logger->write("Other thread is downloading model already, sleeping");
         std::shared_ptr<DownloadState> downloadState = iter->second;
         //Wait until that thread is done
         while(downloadState->downloadingInProgress) {
           downloadState->downloadingInProgressVar.wait(lock);
         }
-        logger->write("DEBUG: Woke up, other thread finished downloading model");
+        logger->write("Woke up, other thread finished downloading model");
         //Sleep a little while and then try again to see if we still need to download the model.
         std::this_thread::sleep_for(std::chrono::duration<double>(2.0));
         continue;
@@ -741,22 +811,25 @@ bool Connection::downloadModelIfNotPresent(
     }
 
     //No other thread is downloading it, so mark that we're downloading it.
-    logger->write("DEBUG: Claiming download lock of model " + modelInfo.name);
+    logger->write("Beginning download of model " + modelInfo.name);
     std::shared_ptr<DownloadState> downloadState = std::make_shared<DownloadState>();
     downloadState->downloadingInProgress = true;
     downloadStateByUrl[modelInfo.downloadUrl] = downloadState;
     lock.unlock();
 
     //Make absolutely sure we don't deadlock - mark that we're done after we're done.
+    //And make sure mutexes, unlocks, etc. happen
     std::function<void()> cleanup = [&]() {
       lock.lock();
       downloadState->downloadingInProgress = false;
       downloadState->downloadingInProgressVar.notify_all();
       downloadStateByUrl.erase(modelInfo.downloadUrl);
-      logger->write("DEBUG: Releasing download lock of model " + modelInfo.name);
+      // logger->write("DEBUG: Releasing download lock of model " + modelInfo.name);
       lock.unlock();
     };
     Global::CustomScopeGuard<std::function<void()>> guard(std::move(cleanup));
+
+    ThrottleLockGuard throttleLock(downloadThrottle);
     actuallyDownloadModel(modelInfo, modelDir, shouldStop);
   }
 }
@@ -768,9 +841,17 @@ bool Connection::actuallyDownloadModel(
   if(modelInfo.isRandom)
     return true;
   const string path = getModelPath(modelInfo,modelDir);
-  Url url;
+  Url urlToActuallyUse;
   try {
-    url = Url::parse(modelInfo.downloadUrl);
+    if(modelDownloadMirrorBaseUrl != "") {
+      Url urlFromServer = Url::parse(modelInfo.downloadUrl);
+      urlToActuallyUse = Url::parse(modelDownloadMirrorBaseUrl);
+      urlToActuallyUse.replacePath(urlFromServer.path);
+      logger->write("Attempting to download from mirror server: " + urlToActuallyUse.originalString);
+    }
+    else {
+      urlToActuallyUse = Url::parse(modelInfo.downloadUrl);
+    }
   }
   catch(const StringError& e) {
     throw StringError(string("Could not parse URL to download model: ") + e.what());
@@ -788,17 +869,29 @@ bool Connection::actuallyDownloadModel(
     size_t totalDataSize = 0;
 
     auto fInner = [&](int& innerLoopFailMode) {
+      if(totalDataSize >= modelInfo.bytes)
+        return;
       const size_t oldTotalDataSize = totalDataSize;
+      const size_t startByte = oldTotalDataSize;
+      const size_t endByte = modelInfo.bytes-1;
+      const string proxyHostToUse = mirrorUseProxy ? proxyHost : "";
       httplib::Result response = oneShotDownload(
-        logger, url, caCertsFile, proxyHost, proxyPort, oldTotalDataSize, modelInfo.bytes,
-        [&out,&totalDataSize,&shouldStop,this,&timer,&lastTime,&url,&modelInfo](const char* data, size_t data_length) {
+        logger, urlToActuallyUse, caCertsFile, proxyHostToUse, proxyPort, startByte, endByte,
+        [&out,&totalDataSize,&shouldStop,this,&timer,&lastTime,&urlToActuallyUse,&modelInfo](const char* data, size_t data_length) {
           out.write(data, data_length);
           totalDataSize += data_length;
           double nowTime = timer.getSeconds();
           if(nowTime > lastTime + 1.0) {
             lastTime = nowTime;
-            logger->write(string("Downloaded ") + Global::uint64ToString(totalDataSize) + " / " + Global::uint64ToString(modelInfo.bytes) + " bytes for model: " + url.originalString);
+            logger->write(
+              string("Downloaded ") +
+              Global::uint64ToString(totalDataSize) + " / " + Global::uint64ToString(modelInfo.bytes) +
+              " bytes for model: " + urlToActuallyUse.originalString
+            );
           }
+          //Something is wrong if we've downloaded more bytes than exist in the model. Halt the download at that point
+          if(totalDataSize > modelInfo.bytes)
+            return false;
           return !shouldStop.load();
         }
       );
@@ -841,21 +934,18 @@ bool Connection::actuallyDownloadModel(
         " bytes out of " + Global::int64ToString(modelInfo.bytes)
       );
 
-    //Verify hash to see if the file is as expected
-    modelInfo.failIfSha256Mismatch(tmpPath);
-
     //Attempt to load the model file to verify gzip integrity and that we actually support this model format
     {
       ModelDesc descBuf;
-      ModelDesc::loadFromFileMaybeGZipped(tmpPath,descBuf);
+      ModelDesc::loadFromFileMaybeGZipped(tmpPath,descBuf,modelInfo.sha256);
     }
 
     //Done! Rename the file into the right place
     std::rename(tmpPath.c_str(),path.c_str());
 
-    logger->write(string("Done downloading ") + Global::uint64ToString(totalDataSize) + " bytes for model: " + url.originalString);
+    logger->write(string("Done downloading ") + Global::uint64ToString(totalDataSize) + " bytes for model: " + urlToActuallyUse.originalString);
   };
-  const int maxTries = 2;
+  const int maxTries = 4;
   return retryLoop("downloadModelIfNotPresent",maxTries,shouldStop,fOuter);
 }
 

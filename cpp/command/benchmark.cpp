@@ -157,7 +157,7 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
   logger.setLogToStdout(true);
   logger.write("Loading model and initializing benchmark...");
 
-  SearchParams params = Setup::loadSingleParams(cfg);
+  SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_BENCHMARK);
   params.maxVisits = maxVisits;
   params.maxPlayouts = maxVisits;
   params.maxTime = 1e20;
@@ -279,8 +279,9 @@ static NNEvaluator* createNNEval(int maxNumThreads, CompactSgf* sgf, const strin
     expectedConcurrentEvals = 2;
 #endif
 
+  string expectedSha256 = "";
   NNEvaluator* nnEval = Setup::initializeNNEvaluator(
-    modelFile,modelFile,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
+    modelFile,modelFile,expectedSha256,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
     sgf->xSize,sgf->ySize,defaultMaxBatchSize,
     Setup::SETUP_FOR_BENCHMARK
   );
@@ -836,7 +837,7 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
     logger.setLogToStdout(true);
     logger.write("Loading model and initializing benchmark...");
 
-    SearchParams params = Setup::loadSingleParams(cfg);
+    SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_BENCHMARK);
     params.maxVisits = defaultMaxVisits;
     params.maxPlayouts = defaultMaxVisits;
     params.maxTime = 1e20;

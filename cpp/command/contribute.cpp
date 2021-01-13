@@ -4,8 +4,10 @@
 #include "../core/timer.h"
 #include "../core/makedir.h"
 #include "../core/os.h"
+#include "../core/prioritymutex.h"
 #include "../dataio/loadmodel.h"
 #include "../dataio/homedata.h"
+#include "../external/nlohmann_json/json.hpp"
 #include "../neuralnet/modelversion.h"
 #include "../search/asyncbot.h"
 #include "../program/play.h"
@@ -32,6 +34,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
 #include <sstream>
 #include <chrono>
 #include <csignal>
+using json = nlohmann::json;
 
 using namespace std;
 
@@ -80,7 +83,8 @@ namespace {
 static void runAndUploadSingleGame(
   Client::Connection* connection, GameTask gameTask, int64_t gameIdx,
   Logger& logger, const string& seed, ForkData* forkData, string sgfsDir, Rand& rand,
-  std::atomic<int64_t>& numMovesPlayed, std::unique_ptr<ostream>& outputEachMove
+  std::atomic<int64_t>& numMovesPlayed, std::unique_ptr<ostream>& outputEachMove,
+  bool logGamesAsJson, bool alwaysIncludeOwnership
 ) {
   if(gameTask.task.isRatingGame) {
     logger.write(
@@ -110,7 +114,7 @@ static void runAndUploadSingleGame(
   SearchParams baseParams;
   PlaySettings playSettings;
   try {
-    baseParams = Setup::loadSingleParams(taskCfg);
+    baseParams = Setup::loadSingleParams(taskCfg,Setup::SETUP_FOR_DISTRIBUTED);
     if(gameTask.task.isRatingGame)
       playSettings = PlaySettings::loadForGatekeeper(taskCfg);
     else
@@ -146,14 +150,16 @@ static void runAndUploadSingleGame(
   if(gameTask.task.isRatingGame)
     forkData = NULL;
 
+  const string gameIdString = Global::uint64ToHexString(rand.nextUInt64());
+
   std::function<void(const Board&, const BoardHistory&, Player, Loc, const std::vector<double>&, const std::vector<double>&, const std::vector<double>&, const Search*)>
-    onEachMove = [&numMovesPlayed, &outputEachMove, &botSpecB, &botSpecW](
-      const Board& board, const BoardHistory& hist, Player pla, Loc loc,
+    onEachMove = [&numMovesPlayed, &outputEachMove, &logGamesAsJson, &alwaysIncludeOwnership, &gameIdString, &botSpecB, &botSpecW](
+      const Board& board, const BoardHistory& hist, Player pla, Loc moveLoc,
       const std::vector<double>& winLossHist, const std::vector<double>& leadHist, const std::vector<double>& scoreStdevHist, const Search* search) {
     numMovesPlayed.fetch_add(1,std::memory_order_relaxed);
     if(outputEachMove != nullptr) {
       ostringstream out;
-      Board::printBoard(out, board, loc, &(hist.moveHistory));
+      Board::printBoard(out, board, moveLoc, &(hist.moveHistory));
       if(botSpecB.botName == botSpecW.botName) {
         out << "Network: " << botSpecB.botName << "\n";
       }
@@ -162,7 +168,7 @@ static void runAndUploadSingleGame(
       }
       out << "Rules: " << hist.rules.toJsonString() << "\n";
       out << "Player: " << PlayerIO::playerToString(pla) << "\n";
-      out << "Move: " << Location::toString(loc,board) << "\n";
+      out << "Move: " << Location::toString(moveLoc,board) << "\n";
       out << "Num Visits: " << search->getRootVisits() << "\n";
       if(winLossHist.size() > 0)
         out << "Black Winrate: " << 100.0*(0.5*(1.0 - winLossHist[winLossHist.size()-1])) << "%\n";
@@ -173,13 +179,58 @@ static void runAndUploadSingleGame(
       out << "\n";
       (*outputEachMove) << out.str() << std::flush;
     }
+
+    if(logGamesAsJson and hist.encorePhase == 0) { // If anyone wants to support encorePhase > 0 note passForKo is a thing
+      int analysisPVLen = 15;
+      const Player perspective = P_BLACK;
+      bool preventEncore = true;
+      static constexpr int ownershipMinVisits = 3;
+
+      // output format is a mix between an analysis query and response
+      json ret;
+      // unique to this output
+      ret["gameId"] = gameIdString;
+      ret["move"] = json::array({PlayerIO::playerToStringShort(pla), Location::toString(moveLoc, board)});
+      ret["blackPlayer"] = botSpecB.botName;
+      ret["whitePlayer"] = botSpecW.botName;
+
+      // Usual query fields
+      ret["rules"] = hist.rules.toJson();
+      ret["boardXSize"] = board.x_size;
+      ret["boardYSize"] = board.y_size;
+
+      json moves = json::array();
+      for(auto move: hist.moveHistory) {
+        moves.push_back(json::array({PlayerIO::playerToStringShort(move.pla), Location::toString(move.loc, board)}));
+      }
+      ret["moves"] = moves;
+
+      json initialStones = json::array();
+      const Board& initialBoard = hist.initialBoard;
+      for(int y = 0; y < initialBoard.y_size; y++) {
+        for(int x = 0; x < initialBoard.x_size; x++) {
+          Loc loc = Location::getLoc(x, y, initialBoard.x_size);
+          Player locOwner = initialBoard.colors[loc];
+          if(locOwner != C_EMPTY)
+            initialStones.push_back(json::array({PlayerIO::playerToStringShort(locOwner), Location::toString(loc, initialBoard)}));
+        }
+      }
+      ret["initialStones"] = initialStones;
+      ret["initialPlayer"] = PlayerIO::playerToStringShort(hist.initialPla);
+      ret["initialTurnNumber"] = hist.initialTurnNumber;
+
+      // Usual analysis response fields
+      ret["turnNumber"] = hist.moveHistory.size();
+      search->getAnalysisJson(perspective,board,hist,analysisPVLen,ownershipMinVisits,preventEncore,true,alwaysIncludeOwnership,false,false,ret);
+      std::cout << ret.dump() + "\n" << std::flush; // no endl due to race conditions
+    }
+
   };
 
   const Sgf::PositionSample* posSample = gameTask.repIdx < gameTask.task.startPoses.size() ? &(gameTask.task.startPoses[gameTask.repIdx]) : NULL;
   FinishedGameData* gameData = gameRunner->runGame(
     seed, botSpecB, botSpecW, forkData, posSample,
-    logger,
-    stopConditions, nullptr, onEachMove
+    logger, stopConditions, nullptr, onEachMove, alwaysIncludeOwnership
   );
 
   if(gameData != NULL) {
@@ -188,7 +239,7 @@ static void runAndUploadSingleGame(
       sgfOutputDir = sgfsDir + "/" + gameTask.task.taskGroup;
     else
       sgfOutputDir = sgfsDir + "/" + nnEvalBlack->getModelName();
-    string sgfFile = sgfOutputDir + "/" + Global::uint64ToHexString(rand.nextUInt64()) + ".sgf";
+    string sgfFile = sgfOutputDir + "/" + gameIdString + ".sgf";
 
     ofstream out(sgfFile);
     WriteSgf::writeSgf(out,gameData->bName,gameData->wName,gameData->endHist,gameData,false,true);
@@ -392,8 +443,17 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   else {
     maxSimultaneousGames = userCfg->getInt("maxSimultaneousGames", 1, 4000);
   }
+  bool onlyPlayRatingMatches = false;
+  if(userCfg->contains("onlyPlayRatingMatches")) {
+    onlyPlayRatingMatches = userCfg->getBool("onlyPlayRatingMatches");
+    logger.write("Setting onlyPlayRatingMatches to " + Global::boolToString(onlyPlayRatingMatches));
+  }
+
   int maxRatingMatches;
-  if(!userCfg->contains("maxRatingMatches")) {
+  if(onlyPlayRatingMatches) {
+    maxRatingMatches = 100000000;
+  }
+  else if(!userCfg->contains("maxRatingMatches")) {
     maxRatingMatches = 1;
   }
   else {
@@ -404,6 +464,16 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   if(userCfg->contains("disablePredownloadLoop")) {
     disablePredownloadLoop = userCfg->getBool("disablePredownloadLoop");
     logger.write("Setting disablePredownloadLoop to " + Global::boolToString(disablePredownloadLoop));
+  }
+  string modelDownloadMirrorBaseUrl;
+  bool mirrorUseProxy = true;
+  if(userCfg->contains("modelDownloadMirrorBaseUrl")) {
+    modelDownloadMirrorBaseUrl = userCfg->getString("modelDownloadMirrorBaseUrl");
+    logger.write("Setting modelDownloadMirrorBaseUrl to " + modelDownloadMirrorBaseUrl);
+    if(userCfg->contains("mirrorUseProxy")) {
+      mirrorUseProxy = userCfg->getBool("mirrorUseProxy");
+      logger.write("Setting mirrorUseProxy to " + Global::boolToString(mirrorUseProxy));
+    }
   }
 
   //Play selfplay games and rating games in chunks of this many at a time. Each server query
@@ -422,6 +492,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   const double reportPerformanceEvery = userCfg->contains("reportPerformanceEvery") ? userCfg->getDouble("reportPerformanceEvery", 1, 21600) : 120;
   const bool watchOngoingGameInFile = userCfg->contains("watchOngoingGameInFile") ? userCfg->getBool("watchOngoingGameInFile") : false;
   string watchOngoingGameInFileName = userCfg->contains("watchOngoingGameInFileName") ? userCfg->getString("watchOngoingGameInFileName") : "";
+  const bool logGamesAsJson = userCfg->contains("logGamesAsJson") ? userCfg->getBool("logGamesAsJson") : false;
+  const bool alwaysIncludeOwnership = userCfg->contains("includeOwnership") ? userCfg->getBool("includeOwnership") : false;
   if(watchOngoingGameInFileName == "")
     watchOngoingGameInFileName = "watchgame.txt";
 
@@ -429,6 +501,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   Client::Connection* connection = new Client::Connection(
     serverUrl,username,password,caCertsFile,
     proxyHost,proxyPort,
+    modelDownloadMirrorBaseUrl,
+    mirrorUseProxy,
     &logger
   );
   const Client::RunParameters runParams = connection->getRunParameters();
@@ -487,6 +561,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
 
   Setup::initializeSession(*userCfg);
 
+  //-----------------------------------------------------------------------------------------------------------------
+
   //Shared across all game threads
   ThreadSafeQueue<GameTask> gameTaskQueue(1);
   ForkData* forkData = new ForkData();
@@ -496,7 +572,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
 
   auto runGameLoop = [
     &logger,forkData,&gameSeedBase,&gameTaskQueue,&numGamesStarted,&sgfsDir,&connection,
-    &numRatingGamesActive,&numMovesPlayed,&watchOngoingGameInFile,&watchOngoingGameInFileName
+    &numRatingGamesActive,&numMovesPlayed,&watchOngoingGameInFile,&watchOngoingGameInFileName,
+    &logGamesAsJson, &alwaysIncludeOwnership
   ] (
     int gameLoopThreadIdx
   ) {
@@ -513,7 +590,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
       if(!shouldStop.load()) {
         string seed = gameSeedBase + ":" + Global::uint64ToHexString(thisLoopSeedRand.nextUInt64());
         int64_t gameIdx = numGamesStarted.fetch_add(1,std::memory_order_acq_rel);
-        runAndUploadSingleGame(connection,gameTask,gameIdx,logger,seed,forkData,sgfsDir,thisLoopSeedRand,numMovesPlayed,outputEachMove);
+        runAndUploadSingleGame(connection,gameTask,gameIdx,logger,seed,forkData,sgfsDir,thisLoopSeedRand,numMovesPlayed,outputEachMove,logGamesAsJson,alwaysIncludeOwnership);
       }
       gameTask.blackManager->release(gameTask.nnEvalBlack);
       gameTask.whiteManager->release(gameTask.nnEvalWhite);
@@ -529,6 +606,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     Logger::logThreadUncaught("game loop", &logger, [&](){ runGameLoop(gameLoopThreadIdx); });
   };
 
+  //-----------------------------------------------------------------------------------------------------------------
+
   bool userCfgWarnedYet = false;
 
   auto loadNeuralNetIntoManager =
@@ -542,7 +621,18 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     logger.write("Found new neural net " + modelName);
 
     //At load time, check the sha256 again to make sure we have the right thing.
-    modelInfo.failIfSha256Mismatch(modelFile);
+    try {
+      modelInfo.failIfSha256Mismatch(modelFile);
+    }
+    catch(const StringError& e) {
+      //If it's wrong, fail (it means someone modified the file on disk, or there was harddrive corruption, or something, since that file
+      //must have been valid at download time), but also rename the file out of the way so that if we restart the program, the next try
+      //will do a fresh download.
+      string newName = modelFile + ".invalid";
+      logger.write("Model file modified or corrupted on disk, sha256 no longer matches? Moving it to " + newName + " and failing.");
+      std::rename(modelFile.c_str(),newName.c_str());
+      throw;
+    }
 
     int maxSimultaneousGamesThisNet = isRatingManager ? maxSimultaneousRatingGamesPossible : maxSimultaneousGames;
     int maxConcurrentEvals = runParams.maxSearchThreadsAllowed * maxSimultaneousGamesThisNet * 2 + 16;
@@ -557,7 +647,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
 
     Rand rand;
     NNEvaluator* nnEval = Setup::initializeNNEvaluator(
-      modelName,modelFile,*userCfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
+      modelName,modelFile,modelInfo.sha256,*userCfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
       NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,
       Setup::SETUP_FOR_DISTRIBUTED
     );
@@ -587,6 +677,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     manager->loadModelNoDataWritingLoop(nnEval, tdataWriter, vdataWriter, sgfOut);
   };
 
+  //-----------------------------------------------------------------------------------------------------------------
+
   //For distributed selfplay, we have a single thread primarily in charge of the manager, so we turn this off
   //to ensure there is no asynchronous removal of models.
   bool autoCleanupAllButLatestIfUnused = false;
@@ -600,11 +692,13 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     gameThreads.push_back(std::thread(runGameLoopProtected,i));
   }
 
+  //-----------------------------------------------------------------------------------------------------------------
+
   ClockTimer timer;
   double lastPerformanceTime = timer.getSeconds();
   int64_t lastPerformanceNumMoves = numMovesPlayed.load(std::memory_order_relaxed);
   int64_t lastPerformanceNumNNEvals = (int64_t)(selfplayManager->getTotalNumRowsProcessed() + ratingManager->getTotalNumRowsProcessed());
-  auto maybePrintPerformance = [&]() {
+  auto maybePrintPerformanceUnsynchronized = [&]() {
     double now = timer.getSeconds();
     //At most every minute, report performance
     if(now >= lastPerformanceTime + reportPerformanceEvery) {
@@ -628,6 +722,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     }
   };
 
+  //-----------------------------------------------------------------------------------------------------------------
+
   //Loop at a random wide interval downloading the latest net if we're going to need it.
   //Randomize a bit so that the server sees download requests as being well-spaced out.
   auto preDownloadLoop = [&]() {
@@ -637,9 +733,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     while(true) {
       if(shouldStop.load())
         return;
-      logger.write("DEBUG: Maybe predownloading model");
+      logger.write("Maybe predownloading model...");
       connection->maybeDownloadNewestModel(modelsDir,shouldStop);
-      logger.write("DEBUG: Done maybe predownloading model");
       //20 to 25 minutes
       double sleepTimeTotal = preDownloadLoopRand.nextDouble(1200,1500);
       constexpr double stopPollFrequency = 5.0;
@@ -657,15 +752,34 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   };
   std::thread preDownloadThread(preDownloadLoopProtected);
 
+  //-----------------------------------------------------------------------------------------------------------------
+
+  PriorityMutex taskLoopMutex;
+  double lastTaskQueryTime = timer.getSeconds();
+  bool anyTaskSuccessfullyParsedYet = false;
+  constexpr double taskLoopSleepTime = 1.0;
+
+  //Multiple of these may be running!
+  //Loop acquiring tasks and feeding them to game threads
   auto taskLoop = [&]() {
-    //Loop acquiring tasks and feeding them to game threads
     Rand taskRand;
-    bool anyTaskSuccessfullyParsedYet = false;
     while(true) {
-      maybePrintPerformance();
-      std::this_thread::sleep_for(std::chrono::duration<double>(1.0));
       if(shouldStop.load())
         break;
+      std::this_thread::sleep_for(std::chrono::duration<double>(taskRand.nextDouble(taskLoopSleepTime,taskLoopSleepTime*2)));
+      PriorityLock taskLock(taskLoopMutex);
+      taskLock.lockLowPriority();
+
+      maybePrintPerformanceUnsynchronized();
+      if(shouldStop.load())
+        break;
+
+      //Make sure that among multiple task loops, that we can't loop or query too fast.
+      {
+        double now = timer.getSeconds();
+        if(now < lastTaskQueryTime + taskLoopSleepTime)
+          continue;
+      }
 
 #ifdef SIGPIPE
       while(sigPipeReceivedCount.load() > 0) {
@@ -673,6 +787,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
         logger.write("Note: SIGPIPE received at some point, it's possible this is from bad internet rather than a broke shell pipe, so ignoring rather than killing the program.");
       }
 #endif
+
       //Make sure we register if rating games are done so that we can know if we can accept more.
       ratingManager->cleanupUnusedModelsOlderThan(0);
 
@@ -683,11 +798,13 @@ int MainCmds::contribute(int argc, const char* const* argv) {
         numRatingGamesActive.load(std::memory_order_acquire) <= (maxRatingMatches - 1) * taskRepFactor &&
         (int64_t)ratingManager->numModels() <= maxRatingMatches * 2 - 2
       );
+      bool allowSelfplayTask = !onlyPlayRatingMatches;
 
       Client::Task task;
-      bool suc = connection->getNextTask(task,baseDir,retryOnFailure,allowRatingTask,taskRepFactor,shouldStop);
+      bool suc = connection->getNextTask(task,baseDir,retryOnFailure,allowSelfplayTask,allowRatingTask,taskRepFactor,shouldStop);
       if(!suc)
         continue;
+      lastTaskQueryTime = timer.getSeconds();
 
       if(task.runName != runParams.runName) {
         throw StringError(
@@ -707,21 +824,45 @@ int MainCmds::contribute(int argc, const char* const* argv) {
         MakeDir::make(sgfOutputDir);
       }
 
+      //Attempt model file download!
       {
-        bool suc1;
-        bool suc2;
-        try {
-          suc1 = connection->downloadModelIfNotPresent(task.modelBlack,modelsDir,shouldStop);
-          suc2 = connection->downloadModelIfNotPresent(task.modelWhite,modelsDir,shouldStop);
-        }
-        catch(StringError& e) {
-          logger.write(string("Giving up on task due to downloading model error:\n") + e.what());
-          suc1 = false;
-          suc2 = false;
+        bool givingUpOnTask = false;
+        //This loop is so that if somehow a model gets removed in between our download and re-picking up the lock,
+        //we'll download it again, so long as the download itself didn't seem to have any errors.
+        while(
+          !connection->isModelPresent(task.modelBlack,modelsDir) ||
+          !connection->isModelPresent(task.modelWhite,modelsDir)
+        ) {
+          //Drop the lock while we download, so that other task loops can proceed
+          taskLock.unlock();
+          bool suc1;
+          bool suc2;
+          try {
+            suc1 = connection->downloadModelIfNotPresent(task.modelBlack,modelsDir,shouldStop);
+            suc2 = connection->downloadModelIfNotPresent(task.modelWhite,modelsDir,shouldStop);
+          }
+          catch(StringError& e) {
+            logger.write(string("Giving up on task due to downloading model error:\n") + e.what());
+            suc1 = false;
+            suc2 = false;
+          }
+          //Pick up the lock again after download
+          taskLock.lockHighPriority();
+
+          if(shouldStop.load())
+            break;
+          //If the download itself had errors, we give up
+          if(!suc1 || !suc2) {
+            givingUpOnTask = true;
+            break;
+          }
+
+          //No apparent errors, hit the while loop condition again to make sure we have the models
+          continue;
         }
         if(shouldStop.load())
           break;
-        if(!suc1 || !suc2)
+        if(givingUpOnTask)
           continue;
       }
 
@@ -806,11 +947,18 @@ int MainCmds::contribute(int argc, const char* const* argv) {
       anyTaskSuccessfullyParsedYet = true;
     }
   };
+  auto taskLoopProtected = [&logger,&taskLoop]() {
+    Logger::logThreadUncaught("task loop", &logger, taskLoop);
+  };
 
-  //If task loop raises an exception, we need to log here BEFORE destructing main context, because in some cases
-  //gameThreads[i].join() will abort without useful exception due to thread not being joinable,
-  //hiding the real exception.
-  Logger::logThreadUncaught("task loop", &logger, taskLoop);
+  int numTaskLoopThreads = 4;
+  vector<std::thread> taskLoopThreads;
+  for(int i = 0; i<numTaskLoopThreads; i++) {
+    taskLoopThreads.push_back(std::thread(taskLoopProtected));
+  }
+  //Wait for all task loop threads to stop
+  for(int i = 0; i<taskLoopThreads.size(); i++)
+    taskLoopThreads[i].join();
 
   logger.write("Beginning shutdown");
 
