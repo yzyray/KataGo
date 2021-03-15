@@ -209,9 +209,21 @@ void Board::initHash()
   IS_ZOBRIST_INITALIZED = true;
 }
 
+Hash128 Board::getSitHashWithSimpleKo(Player pla) const {
+  Hash128 h = pos_hash;
+  if(ko_loc != Board::NULL_LOC)
+    h = h ^ Board::ZOBRIST_KO_LOC_HASH[ko_loc];
+  h ^= Board::ZOBRIST_PLAYER_HASH[pla];
+  return h;
+}
+
 void Board::clearSimpleKoLoc() {
   ko_loc = NULL_LOC;
 }
+void Board::setSimpleKoLoc(Loc loc) {
+  ko_loc = loc;
+}
+
 
 //Gets the number of stones of the chain at loc. Precondition: location must be black or white.
 int Board::getChainSize(Loc loc) const
@@ -2265,6 +2277,32 @@ void Board::checkConsistency() const {
     if(tmpAdjOffsets[i] != adj_offsets[i])
       throw StringError(errLabel + "Corrupted adj_offsets array");
 }
+
+bool Board::isEqualForTesting(const Board& other, bool checkNumCaptures, bool checkSimpleKo) const {
+  checkConsistency();
+  other.checkConsistency();
+  if(x_size != other.x_size)
+    return false;
+  if(y_size != other.y_size)
+    return false;
+  if(checkSimpleKo && ko_loc != other.ko_loc)
+    return false;
+  if(checkNumCaptures && numBlackCaptures != other.numBlackCaptures)
+    return false;
+  if(checkNumCaptures && numWhiteCaptures != other.numWhiteCaptures)
+    return false;
+  if(pos_hash != other.pos_hash)
+    return false;
+  for(int i = 0; i<MAX_ARR_SIZE; i++) {
+    if(colors[i] != other.colors[i])
+      return false;
+  }
+  //We don't require that the chain linked lists are in the same order.
+  //Consistency check ensures that all the linked lists are consistent with colors array, which we checked.
+  return true;
+}
+
+
 
 //IO FUNCS------------------------------------------------------------------------------------------
 

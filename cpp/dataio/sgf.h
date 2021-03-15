@@ -25,6 +25,7 @@ struct SgfNode {
 
   bool hasProperty(const char* key) const;
   std::string getSingleProperty(const char* key) const;
+  const std::vector<std::string> getProperties(const char* key) const;
 
   bool hasPlacements() const;
   void accumPlacements(std::vector<Move>& moves, int xSize, int ySize) const;
@@ -36,6 +37,8 @@ struct SgfNode {
 };
 
 struct Sgf {
+  static constexpr int RANK_UNKNOWN = -100000;
+
   std::string fileName;
   std::vector<SgfNode*> nodes;
   std::vector<Sgf*> children;
@@ -58,6 +61,10 @@ struct Sgf {
   bool hasRules() const;
   Rules getRulesOrFail() const;
   int getHandicapValue() const;
+  Player getSgfWinner() const;
+
+  int getRank(Player pla) const; //dan ranks are 1d=0, 2d=1,... 9d=8. Kyu ranks are negative.
+  std::string getPlayerName(Player pla) const;
 
   void getPlacements(std::vector<Move>& moves, int xSize, int ySize) const;
   void getMoves(std::vector<Move>& moves, int xSize, int ySize) const;
@@ -84,6 +91,10 @@ struct Sgf {
 
     static std::string toJsonLine(const PositionSample& sample);
     static PositionSample ofJsonLine(const std::string& s);
+
+    //For the moment, only used in testing since it does extra consistency checks.
+    //If we need a version to be used in "prod", we could make an efficient version maybe as operator==.
+    bool isEqualForTesting(const PositionSample& other, bool checkNumCaptures, bool checkSimpleKo) const;
   };
 
   //Loads SGF all unique positions in ALL branches of that SGF.

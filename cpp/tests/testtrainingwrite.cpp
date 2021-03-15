@@ -61,6 +61,10 @@ static NNEvaluator* startNNEval(
 }
 
 void Tests::runTrainingWriteTests() {
+  bool inputsNHWC = true;
+  bool useNHWC = false;
+  TestCommon::overrideForOpenCL(inputsNHWC, useNHWC);
+
   cout << "Running training write tests" << endl;
   NeuralNet::globalInitialize();
 
@@ -81,7 +85,7 @@ void Tests::runTrainingWriteTests() {
   ) {
     TrainingDataWriter dataWriter(&cout,inputsVersion, maxRows, firstFileMinRandProp, nnXLen, nnYLen, debugOnlyWriteEvery, seedBase+"dwriter");
 
-    NNEvaluator* nnEval = startNNEval("/dev/null",seedBase+"nneval",logger,0,true,false,false);
+    NNEvaluator* nnEval = startNNEval("/dev/null",seedBase+"nneval",logger,0,inputsNHWC,useNHWC,false);
 
     SearchParams params;
     params.maxVisits = cheapLongSgf ? 2 : 100;
@@ -186,6 +190,10 @@ void Tests::runTrainingWriteTests() {
 
 
 void Tests::runSelfplayInitTestsWithNN(const string& modelFile) {
+  bool inputsNHWC = true;
+  bool useNHWC = false;
+  TestCommon::overrideForOpenCL(inputsNHWC, useNHWC);
+
   cout << "Running test for selfplay initialization with NN" << endl;
   NeuralNet::globalInitialize();
 
@@ -193,7 +201,7 @@ void Tests::runSelfplayInitTestsWithNN(const string& modelFile) {
   logger.setLogToStdout(true);
   logger.setLogTime(false);
 
-  NNEvaluator* nnEval = startNNEval(modelFile,"nneval",logger,0,true,false,false);
+  NNEvaluator* nnEval = startNNEval(modelFile,"nneval",logger,0,inputsNHWC,useNHWC,false);
 
   auto run = [&](
     const string& seedBase,
@@ -348,6 +356,10 @@ void Tests::runSelfplayInitTestsWithNN(const string& modelFile) {
 }
 
 void Tests::runMoreSelfplayTestsWithNN(const string& modelFile) {
+  bool inputsNHWC = true;
+  bool useNHWC = false;
+  TestCommon::overrideForOpenCL(inputsNHWC, useNHWC);
+
   cout << "Running more tests for selfplay" << endl;
   NeuralNet::globalInitialize();
 
@@ -355,7 +367,7 @@ void Tests::runMoreSelfplayTestsWithNN(const string& modelFile) {
   logger.setLogToStdout(true);
   logger.setLogTime(false);
 
-  NNEvaluator* nnEval = startNNEval(modelFile,"nneval",logger,0,true,false,false);
+  NNEvaluator* nnEval = startNNEval(modelFile,"nneval",logger,0,inputsNHWC,useNHWC,false);
 
   auto run = [&](
     const string& seedBase,
@@ -491,7 +503,7 @@ void Tests::runMoreSelfplayTestsWithNN(const string& modelFile) {
       Play::maybeHintForkGame(gameData, &forkData, otherGameProps);
       cout << " Forkstuff " << forkData.forks.size() << " " << forkData.sekiForks.size() << endl;
       for(int i = 0; i<forkData.forks.size(); i++)
-        cout << forkData.forks[0]->board << endl;
+        cout << forkData.forks[i]->board << endl;
     }
 
     gameData->printDebug(cout);
@@ -931,6 +943,10 @@ xxxxxxxx.
 
 
 void Tests::runSekiTrainWriteTests(const string& modelFile) {
+  bool inputsNHWC = true;
+  bool useNHWC = false;
+  TestCommon::overrideForOpenCL(inputsNHWC, useNHWC);
+
   cout << "Running test for how a seki gets recorded" << endl;
   NeuralNet::globalInitialize();
 
@@ -941,7 +957,7 @@ void Tests::runSekiTrainWriteTests(const string& modelFile) {
   logger.setLogToStdout(true);
   logger.setLogTime(false);
 
-  NNEvaluator* nnEval = startNNEval(modelFile,"nneval",logger,0,true,false,false);
+  NNEvaluator* nnEval = startNNEval(modelFile,"nneval",logger,0,inputsNHWC,useNHWC,false);
 
   auto run = [&](const string& sgfStr, const string& seedBase, const Rules& rules) {
     int inputsVersion = 6;
@@ -1021,12 +1037,12 @@ void Tests::runSekiTrainWriteTests(const string& modelFile) {
   };
 
   vector<Rules> ruless = {
-    Rules(Rules::KO_SIMPLE, Rules::SCORING_AREA, Rules::TAX_NONE, false, false, Rules::WHB_ZERO, 0.0f),
-    Rules(Rules::KO_SIMPLE, Rules::SCORING_TERRITORY, Rules::TAX_NONE, false, false, Rules::WHB_ZERO, 0.0f),
-    Rules(Rules::KO_SIMPLE, Rules::SCORING_AREA, Rules::TAX_SEKI, false, false, Rules::WHB_ZERO, 0.0f),
-    Rules(Rules::KO_SIMPLE, Rules::SCORING_TERRITORY, Rules::TAX_SEKI, false, false, Rules::WHB_ZERO, 0.0f),
-    Rules(Rules::KO_SIMPLE, Rules::SCORING_AREA, Rules::TAX_ALL, false, false, Rules::WHB_ZERO, 0.0f),
-    Rules(Rules::KO_SIMPLE, Rules::SCORING_TERRITORY, Rules::TAX_ALL, false, false, Rules::WHB_ZERO, 0.0f),
+    Rules(Rules::KO_SIMPLE, Rules::SCORING_AREA, Rules::TAX_NONE, false, false, Rules::WHB_ZERO, false, 0.0f),
+    Rules(Rules::KO_SIMPLE, Rules::SCORING_TERRITORY, Rules::TAX_NONE, false, false, Rules::WHB_ZERO, false, 0.0f),
+    Rules(Rules::KO_SIMPLE, Rules::SCORING_AREA, Rules::TAX_SEKI, false, false, Rules::WHB_ZERO, false, 0.0f),
+    Rules(Rules::KO_SIMPLE, Rules::SCORING_TERRITORY, Rules::TAX_SEKI, false, false, Rules::WHB_ZERO, false, 0.0f),
+    Rules(Rules::KO_SIMPLE, Rules::SCORING_AREA, Rules::TAX_ALL, false, false, Rules::WHB_ZERO, false, 0.0f),
+    Rules(Rules::KO_SIMPLE, Rules::SCORING_TERRITORY, Rules::TAX_ALL, false, false, Rules::WHB_ZERO, false, 0.0f),
   };
 
   string sgfStr = "(;KM[0.0]PB[]SZ[13]PW[]AP[Sabaki:0.43.3]CA[UTF-8];B[aj];W[bi];B[bk];W[cj];B[cl];W[dk];B[dm];W[el];B[dl];W[ek];B[ck];W[dj];B[bj];W[ci];B[al];W[bm];B[fm];W[em];B[fl];W[ai];B[fk];W[dh];B[fj];W[bl];B[gi];W[eg];B[hh];W[ff];B[ig];W[ge];B[jf];W[hd];B[fi];W[di];B[gh];W[dg];B[hg];W[fe];B[ke];W[ic];B[ld];W[jb];B[fh];W[he];B[je];W[jc];B[kd];W[ja];B[md];W[la];B[mb];W[ka];B[mc];W[gc];B[jh];W[cc];B[kk];W[cf];B[jk];W[dc];B[ej];W[ei];B[eh];W[fg];B[gg];W[gf];B[hf];W[ie];B[if];W[id];B[jd];W[kc];B[lb];W[kb];B[lc])";
@@ -1051,7 +1067,8 @@ void Tests::runSekiTrainWriteTests(const string& modelFile) {
     auto testStatuses = [&nnEval,&bot,&logger](const Board& board, const BoardHistory& hist, Player pla) {
       int numVisits = 50;
       vector<double> ownership = PlayUtils::computeOwnership(bot,board,hist,pla,numVisits,logger);
-      vector<bool> isAlive = PlayUtils::computeAnticipatedStatusesWithOwnership(bot,board,hist,pla,numVisits,logger);
+      vector<double> buf;
+      vector<bool> isAlive = PlayUtils::computeAnticipatedStatusesWithOwnership(bot,board,hist,pla,numVisits,logger,buf);
       testAssert(bot->alwaysIncludeOwnerMap == false);
       cout << "Search assumes " << PlayerIO::playerToString(pla) << " first" << endl;
       cout << "Rules " << hist.rules << endl;

@@ -23,7 +23,9 @@ namespace MainCmds {
   int runselfplayinittests(int argc, const char* const* argv);
   int runsekitrainwritetests(int argc, const char* const* argv);
   int runnnonmanyposestest(int argc, const char* const* argv);
+  int runnnbatchingtest(int argc, const char* const* argv);
   int runownershiptests(int argc, const char* const* argv);
+  int runtinynntests(int argc, const char* const* argv);
 
   int samplesgfs(int argc, const char* const* argv);
   int dataminesgfs(int argc, const char* const* argv);

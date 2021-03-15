@@ -107,6 +107,10 @@ static int handleSubcommand(const string& subcommand, int argc, const char* argv
     return MainCmds::runsekitrainwritetests(argc-1,&argv[1]);
   else if(subcommand == "runnnonmanyposestest")
     return MainCmds::runnnonmanyposestest(argc-1,&argv[1]);
+  else if(subcommand == "runnnbatchingtest")
+    return MainCmds::runnnbatchingtest(argc-1,&argv[1]);
+  else if(subcommand == "runtinynntests")
+    return MainCmds::runtinynntests(argc-1,&argv[1]);
   else if(subcommand == "samplesgfs")
     return MainCmds::samplesgfs(argc-1,&argv[1]);
   else if(subcommand == "dataminesgfs")
@@ -168,11 +172,11 @@ int main(int argc, const char* argv[]) {
 
 
 string Version::getKataGoVersion() {
-  return string("1.8.0");
+  return string("1.8.1");
 }
 
 string Version::getKataGoVersionForHelp() {
-  return string("KataGo v1.8.0");
+  return string("KataGo v1.8.1");
 }
 
 string Version::getKataGoVersionFullInfo() {
